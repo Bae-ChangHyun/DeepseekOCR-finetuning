@@ -1,0 +1,59 @@
+# ===========================================
+# Dataset Configuration
+# ===========================================
+
+# PDF Processing
+pdf:
+  dpi: 200
+  image_format: "png"
+  # Page range (null for all pages)
+  start_page: null
+  end_page: null
+
+# Dataset Generation
+generation:
+  output_dir: ${DATASET_OUTPUT_DIR:./datasets}
+  format: "jsonl"  # jsonl, json, or parquet
+  max_concurrent_requests: 4
+  batch_size: 10
+  save_images: true
+  image_output_dir: ${DATASET_OUTPUT_DIR:./datasets}/images
+
+# Train/Validation Split
+split:
+  train_ratio: 0.9
+  validation_ratio: 0.1
+  shuffle: true
+  seed: 42
+
+# Data Augmentation (optional)
+augmentation:
+  enabled: false
+  # Available augmentations
+  random_rotation:
+    enabled: false
+    max_degrees: 5
+  random_brightness:
+    enabled: false
+    factor: 0.1
+  random_contrast:
+    enabled: false
+    factor: 0.1
+  gaussian_noise:
+    enabled: false
+    std: 0.01
+
+# Conversation Format
+conversation:
+  user_role: "<|User|>"
+  assistant_role: "<|Assistant|>"
+  # Instruction template for training
+  # {prompt} will be replaced with actual prompt from .env
+  vision_instruction: "<image>\nFree OCR. "
+  llm_instruction: "<image>\nAnalyze this document and extract text with layout information."
+
+# Filtering (optional)
+filtering:
+  min_text_length: 1
+  max_text_length: null
+  skip_empty_responses: true

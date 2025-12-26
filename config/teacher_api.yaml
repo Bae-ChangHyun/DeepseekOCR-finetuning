@@ -1,0 +1,66 @@
+# ===========================================
+# Teacher Model Configuration (OpenAI Compatible API)
+# ===========================================
+# 외부 API를 통한 Teacher 모델 설정
+
+type: "api"  # api 또는 local
+model_type: "default"  # 전처리 타입: deepseek, default (API는 보통 default)
+
+# API 설정
+api:
+  base_url: "http://121.156.97.188:8000/v1"
+  model_name: "Qwen/Qwen3-VL-30B-A3B-Instruct-FP8"
+  api_key: "your-api-key"  # 또는 환경변수 사용
+
+# 생성 파라미터
+generation:
+  temperature: 0.1
+  max_tokens: 4096
+  top_p: 1.0
+
+# 요청 설정
+request:
+  timeout: 120
+  max_retries: 3
+  concurrent_requests: 4
+
+# ===========================================
+# Teacher 프롬프트 설정 (key 기반)
+# ===========================================
+# 사용법: --prompt-key <key_name>
+# Student instruction은 config/prompts.yaml에서 관리
+
+prompts:
+  # document
+  document:
+    system: |
+      You are an AI assistant specialized in converting PDF images to Markdown format. Please follow these instructions for the conversion:
+      1. Text and Image Content Processing:
+          - **General Rule:** Your primary goal is to extract legible text. Do not output generic image descriptions (e.g., "Image of a graph", "[Logo]") unless specified below.
+          - **Sub-instruction A: Text in Graphics & UI Elements**
+              - Treat text boxes, buttons, chips, tags, and info cards as **"Text Containers"**, not images.
+              - **CRITICAL:** You MUST transcribe the text content inside these containers. Do not replace them with image placeholders.
+              - Ignore decorative icons that accompany text; focus only on the text itself.
+      2. Table Processing:
+          - **ONLY HTML TABLE:** All tables MUST be converted to standard HTML `<table>` format.
+          - **ABSOLUTELY NO LATEX:** Never use `\begin{tabular}`, `\hline`, `\multirow`, or any other LaTeX-related syntax. Even if the table is complex, use HTML attributes like `rowspan` and `colspan`.
+          - **STRUCTURE:** Use `<thead>`, `<tbody>`, `<tr>`, `<th>`, and `<td>` tags.
+              - If a cell spans multiple rows/columns, use `<td rowspan="n">` or `<td colspan="n">`.
+          - **COMPLEX TABLE EXAMPLE:**
+              If you see a multi-row structure, convert it like this:
+              `<tr><td rowspan="3">Category</td><td>Sub 1</td><td>Example 1</td></tr>`
+      3. Output Format and Layout:
+          - Ensure the output Markdown document has a clear structure with appropriate line breaks between elements.
+          - **Handling Horizontal Lists (Tags/Chips/Buttons):**
+              - When you encounter short text items arranged horizontally in boxes, bubbles, or capsules: **DO NOT** write them as a plain sentence.
+              - **MANDATORY:** Wrap each item in square brackets (e.g., `[Item 1] [Item 2]`) or use inline code blocks (e.g., ` `Item 1` ` `Item 2` `) to preserve their visual isolation.
+          - **Handling Info Cards/Blocks:**
+              - For larger distinct blocks containing multiple lines of text (like career history or detailed info cards), separate them clearly using Markdown headers (`###`), bold labels (`**Label**`), or distinct paragraphs to reflect the card structure.
+      Please strictly follow these guidelines to ensure accuracy and consistency in the conversion. Your task is to accurately convert the content of the PDF image into Markdown format without adding any extra explanations or comments.
+    user: |
+      Output only the extracted text without any additional explanation.
+
+# 출력 설정
+output:
+  format: "jsonl"  # jsonl, json, md (md: 마크다운 파일로 저장)
+  save_images: false  # 이미지를 결과에 포함할지

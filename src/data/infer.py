@@ -35,13 +35,13 @@ def load_prompts_config(prompts_config_path: str | Path | None = None) -> dict:
         return yaml.safe_load(f).get("prompts", {})
 
 
-def get_student_instruction(prompt_key: str, prompts_config_path: str | Path | None = None) -> str:
+def get_student_instruction(task: str, prompts_config_path: str | Path | None = None) -> str:
     """prompts.yaml에서 student instruction 가져오기"""
     prompts = load_prompts_config(prompts_config_path)
-    if prompt_key not in prompts:
+    if task not in prompts:
         available = list(prompts.keys())
-        raise ValueError(f"Unknown prompt_key: '{prompt_key}'. Available: {available}")
-    return prompts[prompt_key].get("instruction", "<image>\nFree OCR. ")
+        raise ValueError(f"Unknown task: '{task}'. Available: {available}")
+    return prompts[task].get("instruction", "<image>\nFree OCR. ")
 
 
 class BaseInferencer(ABC):
@@ -64,7 +64,7 @@ class APIInferencer(BaseInferencer):
     def __init__(
         self,
         config: dict,
-        prompt_key: str,
+        task: str,
         prompts_config_path: str | Path | None = None,
     ):
         if not OPENAI_AVAILABLE:
@@ -76,14 +76,14 @@ class APIInferencer(BaseInferencer):
 
         # Teacher 프롬프트 (config에서)
         prompts = config.get("prompts", {})
-        if prompt_key not in prompts:
+        if task not in prompts:
             available_keys = list(prompts.keys())
             raise ValueError(
-                f"Unknown prompt_key: '{prompt_key}' in teacher config. "
+                f"Unknown task: '{task}' in teacher config. "
                 f"Available keys: {available_keys}"
             )
 
-        teacher_prompts = prompts[prompt_key]
+        teacher_prompts = prompts[task]
 
         self.client = AsyncOpenAI(
             base_url=api_config.get("base_url", "http://localhost:8000/v1"),
@@ -101,7 +101,7 @@ class APIInferencer(BaseInferencer):
         self.user_prompt = teacher_prompts.get("user", "Extract all text from this image.")
 
         # Student instruction (prompts.yaml에서)
-        self.student_instruction = get_student_instruction(prompt_key, prompts_config_path)
+        self.student_instruction = get_student_instruction(task, prompts_config_path)
 
     def _encode_image(self, image_path: Path) -> str:
         """이미지를 base64로 인코딩"""
@@ -198,7 +198,7 @@ class LocalInferencer(BaseInferencer):
     def __init__(
         self,
         config: dict,
-        prompt_key: str,
+        task: str,
         prompts_config_path: str | Path | None = None,
     ):
         local_config = config.get("local", {})
@@ -213,7 +213,7 @@ class LocalInferencer(BaseInferencer):
         self.crop_mode = image_config.get("crop_mode", True)
 
         # prompts.yaml에서 instruction 가져오기 (teacher와 student 동일)
-        self.instruction = get_student_instruction(prompt_key, prompts_config_path)
+        self.instruction = get_student_instruction(task, prompts_config_path)
         self.student_instruction = self.instruction
 
         self.model = None
@@ -247,27 +247,81 @@ class LocalInferencer(BaseInferencer):
 
     def infer(self, image_path: Path) -> str | None:
         """단일 이미지 추론"""
+        import os
+        import sys
+        import tempfile
+
         self._load_model()
 
+        # 저수준 stdout 캡처 (C 확장 출력도 캡처)
+        # 임시 파일로 stdout 리다이렉트
+        old_stdout_fd = os.dup(1)  # stdout의 파일 디스크립터 복사
+        temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt')
+        temp_path = temp_file.name
+        temp_file.close()
+
         try:
-            result = self.model.infer(
-                self.tokenizer,
-                prompt=self.instruction,
-                image_file=str(image_path),
-                output_path="./temp_output",
-                image_size=self.image_size,
-                base_size=self.base_size,
-                crop_mode=self.crop_mode,
-                save_results=False,
-                test_compress=False,
-            )
-            # result가 리스트일 수 있음
-            if isinstance(result, list):
-                return " ".join(str(r) for r in result if r).strip()
-            return str(result).strip() if result else None
+            # stdout을 임시 파일로 리다이렉트
+            with open(temp_path, 'w') as f:
+                os.dup2(f.fileno(), 1)  # stdout을 파일로 리다이렉트
+                sys.stdout = f
+
+                self.model.infer(
+                    self.tokenizer,
+                    prompt=self.instruction,
+                    image_file=str(image_path),
+                    output_path="./temp_output",
+                    image_size=self.image_size,
+                    base_size=self.base_size,
+                    crop_mode=self.crop_mode,
+                    save_results=False,
+                    test_compress=False,
+                )
+
+                f.flush()
+
+            # stdout 복원
+            os.dup2(old_stdout_fd, 1)
+            sys.stdout = sys.__stdout__
+
+            # 캡처된 출력 읽기
+            with open(temp_path, 'r') as f:
+                output = f.read()
+
+            # 임시 파일 삭제
+            os.unlink(temp_path)
+
+            # 마크다운 블록 추출 (```markdown ... ``` 또는 전체 출력)
+            if "```markdown" in output:
+                start = output.find("```markdown") + len("```markdown")
+                end = output.find("```", start)
+                if end > start:
+                    result = output[start:end].strip()
+                else:
+                    result = output[start:].strip()
+            elif "```" in output:
+                start = output.find("```") + 3
+                end = output.find("```", start)
+                if end > start:
+                    result = output[start:end].strip()
+                else:
+                    result = output[start:].strip()
+            else:
+                # 마크다운 블록이 없으면 전체 출력 사용
+                result = output.strip()
+
+            return result if result else None
+
         except Exception as e:
+            # stdout 복원
+            os.dup2(old_stdout_fd, 1)
+            sys.stdout = sys.__stdout__
             print(f"Failed {image_path}: {e}")
             return None
+        finally:
+            os.close(old_stdout_fd)
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
 
     def infer_batch(self, image_paths: list[Path]) -> list[dict]:
         """배치 이미지 추론"""
@@ -290,20 +344,20 @@ class DatasetInferencer:
     def __init__(
         self,
         config_path: str | Path,
-        prompt_key: str,
+        task: str,
         prompts_config_path: str | Path | None = None,
     ):
         self.config_path = Path(config_path)
-        self.prompt_key = prompt_key
+        self.task = task
         self.prompts_config_path = prompts_config_path
         self.config = self._load_config()
 
         # 추론기 타입에 따라 인스턴스 생성
         inferencer_type = self.config.get("type", "api")
         if inferencer_type == "api":
-            self.inferencer = APIInferencer(self.config, prompt_key, prompts_config_path)
+            self.inferencer = APIInferencer(self.config, task, prompts_config_path)
         elif inferencer_type == "local":
-            self.inferencer = LocalInferencer(self.config, prompt_key, prompts_config_path)
+            self.inferencer = LocalInferencer(self.config, task, prompts_config_path)
         else:
             raise ValueError(f"Unknown inferencer type: {inferencer_type}")
 
@@ -356,7 +410,7 @@ class DatasetInferencer:
         """
         image_paths = self._get_image_paths(image_source)
         print(f"Found {len(image_paths)} images")
-        print(f"Using prompt key: {self.prompt_key}")
+        print(f"Using task: {self.task}")
 
         # 추론 실행
         infer_results = self.inferencer.infer_batch(image_paths)
@@ -383,7 +437,7 @@ class DatasetInferencer:
                 ],
                 "metadata": {
                     "source_image": result["image_path"],
-                    "prompt_key": self.prompt_key,
+                    "task": self.task,
                     "config": str(self.config_path),
                 },
             }
@@ -404,12 +458,100 @@ class DatasetInferencer:
         print(f"Dataset saved to {output_path}")
         return output_path
 
+    def run_markdown(
+        self,
+        image_source: str | Path,
+        output_dir: str | Path,
+    ) -> Path:
+        """
+        추론 실행 및 마크다운 파일로 저장
+        같은 PDF의 페이지들({name}_p{page} 패턴)은 하나의 마크다운으로 병합
+
+        Args:
+            image_source: 이미지 파일 또는 이미지가 있는 디렉토리
+            output_dir: 출력 디렉토리
+
+        Returns:
+            출력 디렉토리 경로
+        """
+        import re
+        from src.data.preprocessor import get_preprocessor_for_task
+
+        image_paths = self._get_image_paths(image_source)
+        print(f"Found {len(image_paths)} images")
+        print(f"Using task: {self.task}")
+
+        # config에서 model_type 읽기
+        model_type = self.config.get("model_type", "default")
+
+        # 전처리기 선택
+        preprocessor = get_preprocessor_for_task(self.task, model_type)
+        print(f"Using preprocessor: {preprocessor.__class__.__name__}")
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 추론 실행
+        infer_results = self.inferencer.infer_batch(image_paths)
+        print(f"Successfully inferred {len(infer_results)} / {len(image_paths)} images")
+
+        if not infer_results:
+            print("Warning: No inference results. Check model loading or image paths.")
+            return output_dir
+
+        # 페이지 병합: {name}_p{page} 패턴으로 그룹화
+        # 패턴: name_p0001.png, name_p0002.png -> name.md
+        page_pattern = re.compile(r"^(.+)_p(\d+)$")
+
+        # 결과를 문서별로 그룹화
+        doc_pages: dict[str, list[tuple[int, str]]] = {}
+
+        for result in infer_results:
+            image_path = Path(result["image_path"])
+            stem = image_path.stem
+            text = result["text"]
+
+            match = page_pattern.match(stem)
+            if match:
+                doc_name = match.group(1)
+                page_num = int(match.group(2))
+            else:
+                # 패턴에 맞지 않으면 단독 문서로 처리
+                doc_name = stem
+                page_num = 0
+
+            if doc_name not in doc_pages:
+                doc_pages[doc_name] = []
+            doc_pages[doc_name].append((page_num, text))
+
+        print(f"Grouped into {len(doc_pages)} documents")
+
+        # 각 문서별로 페이지 정렬 후 병합하여 저장
+        saved_files = []
+        for doc_name, pages in doc_pages.items():
+            # 페이지 번호로 정렬
+            pages.sort(key=lambda x: x[0])
+
+            # 각 페이지 전처리 후 병합
+            processed_pages = [preprocessor.process(text) for _, text in pages]
+            merged_content = "\n\n---\n\n".join(processed_pages)
+
+            md_path = output_dir / f"{doc_name}.md"
+            print(f"Writing {md_path}...")
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(merged_content)
+            saved_files.append(md_path)
+            print(f"Saved: {md_path}")
+
+        print(f"Saved {len(saved_files)} markdown files to {output_dir}")
+        return output_dir
+
 
 def run_inference(
     image_source: str | Path,
     output_path: str | Path,
     config_path: str | Path,
-    prompt_key: str,
+    task: str,
     prompts_config_path: str | Path | None = None,
 ) -> Path:
     """
@@ -419,7 +561,7 @@ def run_inference(
         image_source: 이미지 파일 또는 디렉토리
         output_path: 출력 파일 경로
         config_path: Teacher 설정 yaml 경로
-        prompt_key: 프롬프트 key (prompts.yaml 및 teacher config의 key)
+        task: 태스크 이름 (prompts.yaml 및 teacher config의 key)
         prompts_config_path: prompts.yaml 경로 (None이면 기본 경로)
 
     Returns:
@@ -431,14 +573,39 @@ def run_inference(
         ...     image_source="./images",
         ...     output_path="./dataset.jsonl",
         ...     config_path="./config/teacher_api.yaml",
-        ...     prompt_key="ocr_markdown",
+        ...     task="document",
         ... )
     """
-    inferencer = DatasetInferencer(config_path, prompt_key, prompts_config_path)
+    inferencer = DatasetInferencer(config_path, task, prompts_config_path)
     return inferencer.run(image_source, output_path)
 
 
+def run_inference_markdown(
+    image_source: str | Path,
+    output_dir: str | Path,
+    config_path: str | Path,
+    task: str,
+    prompts_config_path: str | Path | None = None,
+) -> Path:
+    """
+    추론 실행 및 마크다운 파일로 저장 편의 함수
+    같은 PDF의 페이지들은 자동으로 하나의 마크다운으로 병합
+
+    Args:
+        image_source: 이미지 파일 또는 디렉토리
+        output_dir: 출력 디렉토리
+        config_path: Teacher 설정 yaml 경로
+        task: 태스크 이름
+        prompts_config_path: prompts.yaml 경로
+
+    Returns:
+        출력 디렉토리 경로
+    """
+    inferencer = DatasetInferencer(config_path, task, prompts_config_path)
+    return inferencer.run_markdown(image_source, output_dir)
+
+
 def list_available_prompts(config_path: str | Path | None = None) -> list[str]:
-    """prompts.yaml에서 사용 가능한 prompt key 목록 반환"""
+    """prompts.yaml에서 사용 가능한 task 목록 반환"""
     prompts = load_prompts_config(config_path)
     return list(prompts.keys())

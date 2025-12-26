@@ -1,0 +1,72 @@
+# ===========================================
+# Training Configuration
+# ===========================================
+
+# Model Settings
+model:
+  base_model_path: ${BASE_MODEL_PATH:./deepseek_ocr}
+  load_in_4bit: false
+  use_gradient_checkpointing: "unsloth"
+
+# LoRA Configuration
+lora:
+  r: 16
+  lora_alpha: 16
+  lora_dropout: 0
+  bias: "none"
+  use_rslora: false
+
+  # Target modules based on training mode
+  # Will be automatically selected based on TRAINING_MODE
+  vision_target_modules:
+    - "vision_model.encoder.layers.*.self_attn.q_proj"
+    - "vision_model.encoder.layers.*.self_attn.k_proj"
+    - "vision_model.encoder.layers.*.self_attn.v_proj"
+    - "vision_model.encoder.layers.*.self_attn.o_proj"
+    - "vision_model.encoder.layers.*.mlp.fc1"
+    - "vision_model.encoder.layers.*.mlp.fc2"
+
+  llm_target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# Training Hyperparameters
+training:
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  weight_decay: 0.001
+  warmup_steps: 5
+  max_steps: 60  # Set to -1 and use num_train_epochs for full training
+  num_train_epochs: 1
+  lr_scheduler_type: "linear"
+  logging_steps: 1
+  save_steps: 100
+  eval_steps: 50
+  optim: "adamw_8bit"
+  seed: 3407
+  dataloader_num_workers: 2
+
+# Image Processing
+image:
+  # Preset sizes:
+  # Tiny: base_size=512, image_size=512, crop_mode=false
+  # Small: base_size=640, image_size=640, crop_mode=false
+  # Base: base_size=1024, image_size=1024, crop_mode=false
+  # Large: base_size=1280, image_size=1280, crop_mode=false
+  # Gundam (recommended): base_size=1024, image_size=640, crop_mode=true
+  image_size: 640
+  base_size: 1024
+  crop_mode: true
+
+# Output Settings
+output:
+  output_dir: ${OUTPUT_MODEL_PATH:./outputs}
+  checkpoint_dir: ${CHECKPOINT_DIR:./checkpoints}
+  save_lora_only: true
+  save_merged_16bit: false

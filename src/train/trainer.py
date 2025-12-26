@@ -62,18 +62,22 @@ class VLMTrainer:
         self.base_size = image_config.get("base_size", 1024)
         self.crop_mode = image_config.get("crop_mode", True)
 
-        # 출력 설정
+        # 출력 설정 (나중에 set_output_dir로 오버라이드 가능)
         output_config = self.config.get("output", {})
-        self.output_dir = os.getenv(
+        self._default_output_dir = os.getenv(
             "OUTPUT_MODEL_PATH", output_config.get("output_dir", "./outputs")
         )
-        self.checkpoint_dir = os.getenv(
-            "CHECKPOINT_DIR", output_config.get("checkpoint_dir", "./checkpoints")
-        )
+        self.output_dir = self._default_output_dir
+        self.checkpoint_dir = str(Path(self.output_dir) / "checkpoints")
 
         self.model = None
         self.tokenizer = None
         self.trainer = None
+
+    def set_output_dir(self, output_dir: str | Path):
+        """출력 디렉토리를 설정합니다. checkpoint_dir은 자동으로 output_dir/checkpoints로 설정됩니다."""
+        self.output_dir = str(output_dir)
+        self.checkpoint_dir = str(Path(output_dir) / "checkpoints")
 
     def _load_config(self, config_path: str | Path | None) -> dict:
         """설정 파일을 로드합니다."""
@@ -214,9 +218,9 @@ class VLMTrainer:
             train_on_responses_only=True,
         )
 
-        # TrainingArguments 설정
+        # TrainingArguments 설정 (체크포인트는 checkpoint_dir에 저장)
         training_args = TrainingArguments(
-            output_dir=self.output_dir,
+            output_dir=self.checkpoint_dir,
             per_device_train_batch_size=self.train_config.get("per_device_train_batch_size", 2),
             gradient_accumulation_steps=self.train_config.get("gradient_accumulation_steps", 4),
             warmup_steps=self.train_config.get("warmup_steps", 5),
@@ -225,7 +229,6 @@ class VLMTrainer:
             logging_steps=self.train_config.get("logging_steps", 1),
             save_steps=self.train_config.get("save_steps", 100),
             eval_steps=self.train_config.get("eval_steps", 50) if eval_dataset else None,
-            evaluation_strategy="steps" if eval_dataset else "no",
             optim=self.train_config.get("optim", "adamw_8bit"),
             weight_decay=self.train_config.get("weight_decay", 0.001),
             lr_scheduler_type=self.train_config.get("lr_scheduler_type", "linear"),

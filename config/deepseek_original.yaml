@@ -1,0 +1,31 @@
+# ===========================================
+# Teacher Model Configuration (Local DeepSeek OCR)
+# ===========================================
+# 로컬 모델을 Teacher로 사용할 때의 설정
+# 프롬프트는 config/prompts.yaml에서 관리
+
+type: "local"  # api 또는 local
+model_type: "deepseek"  # 전처리 타입: deepseek, default
+
+# 로컬 모델 설정
+local:
+  model_path: "./deepseek_ocr"  # 또는 LoRA 어댑터 경로
+  load_in_4bit: false
+  trust_remote_code: true
+
+# 이미지 처리 설정
+image:
+  # Preset sizes:
+  # Tiny: base_size=512, image_size=512, crop_mode=false
+  # Small: base_size=640, image_size=640, crop_mode=false
+  # Base: base_size=1024, image_size=1024, crop_mode=false
+  # Large: base_size=1280, image_size=1280, crop_mode=false
+  # Gundam (recommended): base_size=1024, image_size=640, crop_mode=true
+  image_size: 640
+  base_size: 1024
+  crop_mode: true
+
+# 출력 설정
+output:
+  format: "md"  # jsonl, json, md (md: 마크다운 파일로 저장, 같은 PDF 페이지 자동 병합)
+  save_images: false

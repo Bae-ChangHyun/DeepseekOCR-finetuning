@@ -235,9 +235,15 @@ def evaluate_model(
         if image_path is None or reference_text is None:
             continue
 
-        # 추론
+        # 추론 (stdout 캡처)
+        import io
+        import sys
+
         try:
-            output = model.infer(
+            old_stdout = sys.stdout
+            sys.stdout = captured_output = io.StringIO()
+
+            model.infer(
                 tokenizer,
                 prompt=prompt,
                 image_file=image_path,
@@ -249,8 +255,29 @@ def evaluate_model(
                 test_compress=False,
             )
 
-            hypothesis = output.strip() if isinstance(output, str) else str(output)
+            sys.stdout = old_stdout
+            output = captured_output.getvalue()
+
+            # 마크다운 블록 추출
+            if "```markdown" in output:
+                start = output.find("```markdown") + len("```markdown")
+                end = output.find("```", start)
+                if end > start:
+                    hypothesis = output[start:end].strip()
+                else:
+                    hypothesis = output[start:].strip()
+            elif "```" in output:
+                start = output.find("```") + 3
+                end = output.find("```", start)
+                if end > start:
+                    hypothesis = output[start:end].strip()
+                else:
+                    hypothesis = output[start:].strip()
+            else:
+                hypothesis = output.strip()
+
         except Exception as e:
+            sys.stdout = old_stdout if 'old_stdout' in dir() else sys.stdout
             if verbose:
                 print(f"Error processing {image_path}: {e}")
             hypothesis = ""
@@ -259,11 +286,13 @@ def evaluate_model(
         hypotheses.append(hypothesis)
 
         cer = compute_cer(reference_text, hypothesis)
+        wer = compute_wer(reference_text, hypothesis)
         results.append({
             "image_path": image_path,
             "reference": reference_text,
             "hypothesis": hypothesis,
             "cer": cer,
+            "wer": wer,
         })
 
     # 전체 평가

@@ -1,0 +1,29 @@
+# ===========================================
+# DeepSeek OCR Model Prompts(https://github.com/deepseek-ai/DeepSeek-OCR)
+# ===========================================
+# 사용법: --prompt-key <key_name>
+
+prompts:
+  # 문서 전체 마크다운 변환
+  document:
+    instruction: "<image>\n<|grounding|>Convert the document to markdown."
+
+  # 이미지 내 텍스트 추출 + 레이아웃 분석
+  other image:
+    instruction: "<image>\n<|grounding|>OCR this image."
+
+  # 단순 OCR
+  without layouts:
+    instruction: "<image>\nFree OCR."
+
+  # 도표 추출
+  figures in document:
+    instruction: "<image>\nParse the figure."
+
+  # 일반 이미지 설명
+  general:
+    instruction: "<image>\nDescribe this image in detail."
+
+  # 수식 추출
+  rec:
+    instruction: "<image>\nLocate <|ref|>xxxx<|/ref|> in the image."

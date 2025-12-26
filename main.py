@@ -35,29 +35,56 @@ def cmd_pdf2img(args):
 
 def cmd_infer(args):
     """이미지에서 Teacher 모델로 추론하여 데이터셋 생성"""
-    from src.data.infer import list_available_prompts, run_inference
+    import yaml
+
+    from src.data.infer import list_available_prompts, run_inference, run_inference_markdown
 
     # prompt key 목록 보기
     if args.list_prompts:
         prompts = list_available_prompts(args.config)
-        print(f"Available prompt keys in {args.config}:")
+        print(f"Available tasks in {args.config}:")
         for key in prompts:
             print(f"  - {key}")
         return
 
+    # config에서 output format 읽기
+    with open(args.config) as f:
+        config = yaml.safe_load(f)
+    output_format = config.get("output", {}).get("format", "jsonl")
+    is_markdown = output_format == "md"
+
+    # output 경로 결정
+    output = args.output
+    if output is None:
+        if is_markdown:
+            output = f"./dataset/markdown/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}"
+        else:
+            output = f"./dataset/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
+
     print(f"Image source: {args.images}")
     print(f"Config: {args.config}")
-    print(f"Prompt key: {args.prompt_key}")
-    print(f"Output: {args.output}")
+    print(f"Task: {args.task}")
+    print(f"Output: {output}")
+    print(f"Format: {'markdown' if is_markdown else output_format}")
 
-    output_path = run_inference(
-        image_source=args.images,
-        output_path=args.output,
-        config_path=args.config,
-        prompt_key=args.prompt_key,
-    )
-
-    print(f"\nDataset saved to: {output_path}")
+    if is_markdown:
+        # 마크다운 파일로 저장 (같은 PDF 페이지는 자동 병합)
+        output_dir = run_inference_markdown(
+            image_source=args.images,
+            output_dir=output,
+            config_path=args.config,
+            task=args.task,
+        )
+        print(f"\nMarkdown files saved to: {output_dir}")
+    else:
+        # 데이터셋 형식으로 저장
+        output_path = run_inference(
+            image_source=args.images,
+            output_path=output,
+            config_path=args.config,
+            task=args.task,
+        )
+        print(f"\nDataset saved to: {output_path}")
 
 
 def cmd_train(args):
@@ -69,9 +96,15 @@ def cmd_train(args):
         env_path=args.env,
     )
 
+    # CLI에서 output이 주어지면 output_dir 설정 (checkpoint_dir도 자동 설정)
+    if args.output:
+        trainer.set_output_dir(args.output)
+
     print(f"Layer mode: {args.mode or trainer.training_mode}")
     print(f"Base model: {trainer.base_model_path}")
     print(f"Dataset: {args.dataset}")
+    print(f"Output dir: {trainer.output_dir}")
+    print(f"Checkpoint dir: {trainer.checkpoint_dir}")
 
     # 모델 로드
     trainer.load_model()
@@ -88,19 +121,26 @@ def cmd_train(args):
 
     # 모델 저장
     trainer.save_model(
-        output_path=args.output,
+        output_path=trainer.output_dir,
         save_merged=args.save_merged,
     )
 
 
 def cmd_evaluate(args):
     """모델 평가"""
+    import csv
     import json
 
+    from src.data.infer import get_student_instruction
     from src.eval.metrics import evaluate_model
     from src.train.trainer import VLMTrainer
 
     trainer = VLMTrainer(config_path=args.train_config)
+
+    # Task에서 prompt 가져오기
+    prompt = get_student_instruction(args.task)
+    print(f"Task: {args.task}")
+    print(f"Prompt: {prompt}")
 
     # 모델 로드
     trainer.load_model()
@@ -116,7 +156,7 @@ def cmd_evaluate(args):
         image_size=trainer.image_size,
         base_size=trainer.base_size,
         crop_mode=trainer.crop_mode,
-        prompt=args.prompt or "<image>\nFree OCR. ",
+        prompt=prompt,
         verbose=True,
     )
 
@@ -124,10 +164,27 @@ def cmd_evaluate(args):
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # JSON 저장 (메트릭만)
         with open(output_path, "w", encoding="utf-8") as f:
             save_results = {k: v for k, v in results.items() if k != "detailed_results"}
             json.dump(save_results, f, indent=2, ensure_ascii=False)
-        print(f"\nResults saved to {output_path}")
+        print(f"\nMetrics saved to {output_path}")
+
+        # CSV 저장 (상세 결과)
+        csv_path = output_path.with_suffix(".csv")
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["image", "ground_truth", "prediction", "cer", "wer"])
+            for item in results.get("detailed_results", []):
+                writer.writerow([
+                    item.get("image_path", ""),
+                    item.get("reference", ""),
+                    item.get("hypothesis", ""),
+                    f"{item.get('cer', 0):.4f}",
+                    f"{item.get('wer', 0):.4f}",
+                ])
+        print(f"Detailed results saved to {csv_path}")
 
 
 def cmd_inspect(args):
@@ -164,20 +221,17 @@ Examples:
   # Step 1: Convert PDF to images
   uv run main.py pdf2img --source document.pdf
 
-  # Step 2: List available prompt keys
+  # Step 2: List available tasks
   uv run main.py infer --config config/teacher_api.yaml --list-prompts
 
-  # Step 2: Run inference with Teacher model (API)
-  uv run main.py infer --images ./images --config config/teacher_api.yaml --prompt-key ocr_markdown
-
-  # Step 2 (alt): Run inference with local model
-  uv run main.py infer --images ./images --config config/teacher_local.yaml --prompt-key ocr_simple
+  # Step 2: Run inference (output format determined by config: jsonl/json/md)
+  uv run main.py infer --images ./images --config config/teacher_api.yaml --task document
 
   # Step 3: Train model (--mode selects layers: vision/llm/both)
   uv run main.py train --dataset dataset.jsonl --mode vision
 
   # Evaluate model
-  uv run main.py evaluate --dataset eval.jsonl
+  uv run main.py evaluate --dataset eval.jsonl --task document --output results.json
 
   # Inspect model layers
   uv run main.py inspect --pattern "vision"
@@ -253,19 +307,19 @@ Examples:
     infer_parser.add_argument(
         "--output",
         type=str,
-        default=f"./dataset/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl",
-        help="Output dataset file (e.g., dataset.jsonl)",
+        default=None,
+        help="Output path (auto-determined from config if not specified)",
     )
     infer_parser.add_argument(
-        "--prompt-key",
+        "--task",
         type=str,
-        default="ocr_simple",
-        help="Prompt key from config YAML (e.g., ocr_markdown, ocr_simple, layout)",
+        default="document",
+        help="Task name from prompts.yaml (e.g., document, without layouts)",
     )
     infer_parser.add_argument(
         "--list-prompts",
         action="store_true",
-        help="List available prompt keys in the config file",
+        help="List available tasks in prompts.yaml",
     )
 
     # =============================================
@@ -306,7 +360,7 @@ Examples:
     train_parser.add_argument(
         "--output",
         type=str,
-        default=None,
+        default=f"./results/model/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
         help="Output directory for saved model",
     )
     train_parser.add_argument(
@@ -338,16 +392,16 @@ Examples:
         help="Training config YAML (for model settings)",
     )
     eval_parser.add_argument(
-        "--prompt",
+        "--task",
         type=str,
-        default=None,
-        help="Inference prompt",
+        default="document",
+        help="Task name from prompts.yaml (e.g., document, without layouts)",
     )
     eval_parser.add_argument(
         "--output",
         type=str,
         default=None,
-        help="Output path for results JSON",
+        help="Output path for results JSON (CSV will also be generated)",
     )
 
     # =============================================
