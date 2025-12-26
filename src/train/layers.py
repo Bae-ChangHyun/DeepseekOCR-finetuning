@@ -66,16 +66,16 @@ def get_vision_target_modules() -> list[str]:
     비전 인코더 학습을 위한 타겟 모듈을 반환합니다.
 
     OCR 성능 향상을 위해 비전 인코더의 어텐션과 MLP 레이어를 타겟으로 합니다.
+    DeepSeek-OCR은 transformer 구조를 사용하며 qkv가 통합되어 있습니다.
     """
     return [
-        # Vision Encoder Self-Attention
-        "vision_model.encoder.layers.*.self_attn.q_proj",
-        "vision_model.encoder.layers.*.self_attn.k_proj",
-        "vision_model.encoder.layers.*.self_attn.v_proj",
-        "vision_model.encoder.layers.*.self_attn.o_proj",
-        # Vision Encoder MLP
-        "vision_model.encoder.layers.*.mlp.fc1",
-        "vision_model.encoder.layers.*.mlp.fc2",
+        # Vision Transformer Self-Attention (DeepSeek-OCR uses merged qkv_proj)
+        # PEFT matches modules ending with these names
+        "qkv_proj",
+        "out_proj",
+        # Vision Transformer MLP
+        "fc1",
+        "fc2",
     ]
 
 

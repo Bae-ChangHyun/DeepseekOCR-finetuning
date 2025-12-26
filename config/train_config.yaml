@@ -18,13 +18,12 @@ lora:
 
   # Target modules based on training mode
   # Will be automatically selected based on TRAINING_MODE
+  # DeepSeek-OCR: PEFT matches modules ending with these names
   vision_target_modules:
-    - "vision_model.encoder.layers.*.self_attn.q_proj"
-    - "vision_model.encoder.layers.*.self_attn.k_proj"
-    - "vision_model.encoder.layers.*.self_attn.v_proj"
-    - "vision_model.encoder.layers.*.self_attn.o_proj"
-    - "vision_model.encoder.layers.*.mlp.fc1"
-    - "vision_model.encoder.layers.*.mlp.fc2"
+    - "qkv_proj"
+    - "out_proj"
+    - "fc1"
+    - "fc2"
 
   llm_target_modules:
     - "q_proj"
