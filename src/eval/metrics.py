@@ -6,6 +6,8 @@ OCR 및 레이아웃 분석 성능 평가를 위한 메트릭
 
 from pathlib import Path
 
+from loguru import logger
+
 try:
     import jiwer
     JIWER_AVAILABLE = True
@@ -235,15 +237,9 @@ def evaluate_model(
         if image_path is None or reference_text is None:
             continue
 
-        # 추론 (stdout 캡처)
-        import io
-        import sys
-
+        # 추론 (eval_mode=True로 결과 반환받음)
         try:
-            old_stdout = sys.stdout
-            sys.stdout = captured_output = io.StringIO()
-
-            model.infer(
+            hypothesis = model.infer(
                 tokenizer,
                 prompt=prompt,
                 image_file=image_path,
@@ -253,33 +249,13 @@ def evaluate_model(
                 crop_mode=crop_mode,
                 save_results=False,
                 test_compress=False,
+                eval_mode=True,  # 결과를 반환받기 위해 필수!
             )
-
-            sys.stdout = old_stdout
-            output = captured_output.getvalue()
-
-            # 마크다운 블록 추출
-            if "```markdown" in output:
-                start = output.find("```markdown") + len("```markdown")
-                end = output.find("```", start)
-                if end > start:
-                    hypothesis = output[start:end].strip()
-                else:
-                    hypothesis = output[start:].strip()
-            elif "```" in output:
-                start = output.find("```") + 3
-                end = output.find("```", start)
-                if end > start:
-                    hypothesis = output[start:end].strip()
-                else:
-                    hypothesis = output[start:].strip()
-            else:
-                hypothesis = output.strip()
+            hypothesis = hypothesis.strip() if hypothesis else ""
 
         except Exception as e:
-            sys.stdout = old_stdout if 'old_stdout' in dir() else sys.stdout
             if verbose:
-                print(f"Error processing {image_path}: {e}")
+                logger.error(f"Error processing {image_path}: {e}")
             hypothesis = ""
 
         references.append(reference_text)
@@ -300,14 +276,11 @@ def evaluate_model(
     eval_results["detailed_results"] = results
 
     if verbose:
-        print("\n" + "=" * 50)
-        print("Evaluation Results")
-        print("=" * 50)
-        print(f"Samples: {eval_results['num_samples']}")
-        print(f"Mean CER: {eval_results['cer']['mean']:.4f}")
-        print(f"Mean WER: {eval_results['wer']['mean']:.4f}")
-        print(f"Mean Accuracy: {eval_results['accuracy']['mean']:.4f}")
-        print("=" * 50)
+        logger.info("Evaluation Results")
+        logger.info(f"Samples: {eval_results['num_samples']}")
+        logger.info(f"Mean CER: {eval_results['cer']['mean']:.4f}")
+        logger.info(f"Mean WER: {eval_results['wer']['mean']:.4f}")
+        logger.info(f"Mean Accuracy: {eval_results['accuracy']['mean']:.4f}")
 
     return eval_results
 
@@ -353,11 +326,8 @@ def compare_models(
         },
     }
 
-    print("\n" + "=" * 60)
-    print("Model Comparison")
-    print("=" * 60)
-    print(f"CER: {baseline_cer:.4f} -> {finetuned_cer:.4f} ({cer_improvement_pct:+.1f}%)")
-    print(f"WER: {baseline_wer:.4f} -> {finetuned_wer:.4f} ({wer_improvement_pct:+.1f}%)")
-    print("=" * 60)
+    logger.info("Model Comparison")
+    logger.info(f"CER: {baseline_cer:.4f} -> {finetuned_cer:.4f} ({cer_improvement_pct:+.1f}%)")
+    logger.info(f"WER: {baseline_wer:.4f} -> {finetuned_wer:.4f} ({wer_improvement_pct:+.1f}%)")
 
     return comparison

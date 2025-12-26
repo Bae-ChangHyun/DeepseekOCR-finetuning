@@ -10,15 +10,16 @@ import datetime
 import sys
 from pathlib import Path
 
+from loguru import logger
+
 
 def cmd_pdf2img(args):
     """PDF를 이미지로 변환"""
     from src.data.pdf2img import pdf2img
 
-    print(f"Source: {args.source}")
-    print(f"Output directory: {args.output}")
-    print(f"DPI: {args.dpi}")
-    print(f"Format: {args.format}")
+    logger.info(f"Source: {args.source}")
+    logger.info(f"Output directory: {args.output}")
+    logger.info(f"DPI: {args.dpi}, Format: {args.format}")
 
     image_paths = pdf2img(
         source=args.source,
@@ -29,8 +30,7 @@ def cmd_pdf2img(args):
         end_page=args.end_page,
     )
 
-    print(f"\nConverted {len(image_paths)} pages")
-    print(f"Images saved to: {args.output}")
+    logger.success(f"Converted {len(image_paths)} pages -> {args.output}")
 
 
 def cmd_infer(args):
@@ -42,9 +42,9 @@ def cmd_infer(args):
     # prompt key 목록 보기
     if args.list_prompts:
         prompts = list_available_prompts(args.config)
-        print(f"Available tasks in {args.config}:")
+        logger.info(f"Available tasks in {args.config}:")
         for key in prompts:
-            print(f"  - {key}")
+            logger.info(f"  - {key}")
         return
 
     # config에서 output format 읽기
@@ -61,11 +61,11 @@ def cmd_infer(args):
         else:
             output = f"./dataset/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
 
-    print(f"Image source: {args.images}")
-    print(f"Config: {args.config}")
-    print(f"Task: {args.task}")
-    print(f"Output: {output}")
-    print(f"Format: {'markdown' if is_markdown else output_format}")
+    logger.info(f"Image source: {args.images}")
+    logger.info(f"Config: {args.config}")
+    logger.info(f"Task: {args.task}")
+    logger.info(f"Output: {output}")
+    logger.info(f"Format: {'markdown' if is_markdown else output_format}")
 
     if is_markdown:
         # 마크다운 파일로 저장 (같은 PDF 페이지는 자동 병합)
@@ -75,7 +75,7 @@ def cmd_infer(args):
             config_path=args.config,
             task=args.task,
         )
-        print(f"\nMarkdown files saved to: {output_dir}")
+        logger.success(f"Markdown files saved to: {output_dir}")
     else:
         # 데이터셋 형식으로 저장
         output_path = run_inference(
@@ -84,7 +84,7 @@ def cmd_infer(args):
             config_path=args.config,
             task=args.task,
         )
-        print(f"\nDataset saved to: {output_path}")
+        logger.success(f"Dataset saved to: {output_path}")
 
 
 def cmd_train(args):
@@ -100,11 +100,11 @@ def cmd_train(args):
     if args.output:
         trainer.set_output_dir(args.output)
 
-    print(f"Layer mode: {args.mode or trainer.training_mode}")
-    print(f"Base model: {trainer.base_model_path}")
-    print(f"Dataset: {args.dataset}")
-    print(f"Output dir: {trainer.output_dir}")
-    print(f"Checkpoint dir: {trainer.checkpoint_dir}")
+    logger.info(f"Layer mode: {args.mode or trainer.training_mode}")
+    logger.info(f"Base model: {trainer.base_model_path}")
+    logger.info(f"Dataset: {args.dataset}")
+    logger.info(f"Output dir: {trainer.output_dir}")
+    logger.info(f"Checkpoint dir: {trainer.checkpoint_dir}")
 
     # 모델 로드
     trainer.load_model()
@@ -139,8 +139,8 @@ def cmd_evaluate(args):
 
     # Task에서 prompt 가져오기
     prompt = get_student_instruction(args.task)
-    print(f"Task: {args.task}")
-    print(f"Prompt: {prompt}")
+    logger.info(f"Task: {args.task}")
+    logger.info(f"Prompt: {prompt}")
 
     # 모델 로드
     trainer.load_model()
@@ -169,7 +169,7 @@ def cmd_evaluate(args):
         with open(output_path, "w", encoding="utf-8") as f:
             save_results = {k: v for k, v in results.items() if k != "detailed_results"}
             json.dump(save_results, f, indent=2, ensure_ascii=False)
-        print(f"\nMetrics saved to {output_path}")
+        logger.success(f"Metrics saved to {output_path}")
 
         # CSV 저장 (상세 결과)
         csv_path = output_path.with_suffix(".csv")
@@ -184,7 +184,7 @@ def cmd_evaluate(args):
                     f"{item.get('cer', 0):.4f}",
                     f"{item.get('wer', 0):.4f}",
                 ])
-        print(f"Detailed results saved to {csv_path}")
+        logger.success(f"Detailed results saved to {csv_path}")
 
 
 def cmd_inspect(args):
@@ -200,16 +200,15 @@ def cmd_inspect(args):
     # 레이어 검사
     layers = inspect_model_layers(trainer.model, pattern=args.pattern)
 
-    print(f"\nFound {len(layers)} layers")
+    logger.info(f"Found {len(layers)} layers")
     if args.pattern:
-        print(f"Pattern: {args.pattern}")
-    print("=" * 50)
+        logger.info(f"Pattern: {args.pattern}")
 
     for layer in layers[: args.limit]:
-        print(layer)
+        logger.info(layer)
 
     if len(layers) > args.limit:
-        print(f"... and {len(layers) - args.limit} more")
+        logger.info(f"... and {len(layers) - args.limit} more")
 
 
 def main():
@@ -445,10 +444,10 @@ Examples:
     try:
         commands[args.command](args)
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
+        logger.warning("Interrupted by user")
         sys.exit(1)
     except Exception as e:
-        print(f"\nError: {e}")
+        logger.error(f"Error: {e}")
         raise
 
 

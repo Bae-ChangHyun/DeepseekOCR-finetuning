@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from loguru import logger
 from PIL import Image, ImageOps
 from torch.nn.utils.rnn import pad_sequence
 
@@ -72,7 +73,7 @@ class DeepSeekOCRDataCollator:
             self.bos_id = tokenizer.bos_token_id
         else:
             self.bos_id = 0
-            print(f"Warning: tokenizer has no bos_token_id, using default: {self.bos_id}")
+            logger.warning(f"tokenizer has no bos_token_id, using default: {self.bos_id}")
 
     def deserialize_image(self, image_data) -> Image.Image:
         """Convert image data (bytes dict, PIL Image, or path) to PIL Image in RGB mode"""
@@ -268,7 +269,7 @@ class DeepSeekOCRDataCollator:
             )
 
         if not assistant_started:
-            print("Warning: No assistant message found in sample. Masking all tokens.")
+            logger.warning("No assistant message found in sample. Masking all tokens.")
             prompt_token_count = len(tokenized_str)
 
         images_ori = torch.stack(images_list, dim=0)
@@ -299,7 +300,7 @@ class DeepSeekOCRDataCollator:
                 processed = self.process_single_sample(feature["messages"])
                 batch_data.append(processed)
             except Exception as e:
-                print(f"Error processing sample: {e}")
+                logger.error(f"Error processing sample: {e}")
                 continue
 
         if not batch_data:

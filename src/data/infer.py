@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 import yaml
+from loguru import logger
 from PIL import Image
 from tqdm import tqdm
 
@@ -158,7 +159,7 @@ class APIInferencer(BaseInferencer):
                     if attempt < self.max_retries - 1:
                         await asyncio.sleep(2 ** attempt)
                     else:
-                        print(f"Failed {image_path}: {e}")
+                        logger.error(f"Failed {image_path}: {e}")
                         return image_path, None
 
     def infer(self, image_path: Path) -> str | None:
@@ -233,7 +234,7 @@ class LocalInferencer(BaseInferencer):
         import os
         os.environ["UNSLOTH_WARN_UNINITIALIZED"] = "0"
 
-        print(f"Loading model from {self.model_path}...")
+        logger.info(f"Loading model from {self.model_path}...")
         self.model, self.tokenizer = FastVisionModel.from_pretrained(
             self.model_path,
             load_in_4bit=self.load_in_4bit,
@@ -243,85 +244,33 @@ class LocalInferencer(BaseInferencer):
             use_gradient_checkpointing="unsloth",
         )
         FastVisionModel.for_inference(self.model)
-        print("Model loaded!")
+        logger.success("Model loaded!")
 
     def infer(self, image_path: Path) -> str | None:
         """단일 이미지 추론"""
-        import os
-        import sys
-        import tempfile
-
         self._load_model()
 
-        # 저수준 stdout 캡처 (C 확장 출력도 캡처)
-        # 임시 파일로 stdout 리다이렉트
-        old_stdout_fd = os.dup(1)  # stdout의 파일 디스크립터 복사
-        temp_file = tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.txt')
-        temp_path = temp_file.name
-        temp_file.close()
-
         try:
-            # stdout을 임시 파일로 리다이렉트
-            with open(temp_path, 'w') as f:
-                os.dup2(f.fileno(), 1)  # stdout을 파일로 리다이렉트
-                sys.stdout = f
+            # eval_mode=True를 사용하면 model.infer()가 결과를 반환함
+            # (eval_mode=False일 때는 stdout으로만 출력하고 None 반환)
+            result = self.model.infer(
+                self.tokenizer,
+                prompt=self.instruction,
+                image_file=str(image_path),
+                output_path="./temp_output",
+                image_size=self.image_size,
+                base_size=self.base_size,
+                crop_mode=self.crop_mode,
+                save_results=False,
+                test_compress=False,
+                eval_mode=True,  # 결과를 반환받기 위해 필수!
+            )
 
-                self.model.infer(
-                    self.tokenizer,
-                    prompt=self.instruction,
-                    image_file=str(image_path),
-                    output_path="./temp_output",
-                    image_size=self.image_size,
-                    base_size=self.base_size,
-                    crop_mode=self.crop_mode,
-                    save_results=False,
-                    test_compress=False,
-                )
-
-                f.flush()
-
-            # stdout 복원
-            os.dup2(old_stdout_fd, 1)
-            sys.stdout = sys.__stdout__
-
-            # 캡처된 출력 읽기
-            with open(temp_path, 'r') as f:
-                output = f.read()
-
-            # 임시 파일 삭제
-            os.unlink(temp_path)
-
-            # 마크다운 블록 추출 (```markdown ... ``` 또는 전체 출력)
-            if "```markdown" in output:
-                start = output.find("```markdown") + len("```markdown")
-                end = output.find("```", start)
-                if end > start:
-                    result = output[start:end].strip()
-                else:
-                    result = output[start:].strip()
-            elif "```" in output:
-                start = output.find("```") + 3
-                end = output.find("```", start)
-                if end > start:
-                    result = output[start:end].strip()
-                else:
-                    result = output[start:].strip()
-            else:
-                # 마크다운 블록이 없으면 전체 출력 사용
-                result = output.strip()
-
-            return result if result else None
+            return result.strip() if result else None
 
         except Exception as e:
-            # stdout 복원
-            os.dup2(old_stdout_fd, 1)
-            sys.stdout = sys.__stdout__
-            print(f"Failed {image_path}: {e}")
+            logger.error(f"Failed {image_path}: {e}")
             return None
-        finally:
-            os.close(old_stdout_fd)
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
 
     def infer_batch(self, image_paths: list[Path]) -> list[dict]:
         """배치 이미지 추론"""
@@ -409,12 +358,12 @@ class DatasetInferencer:
             저장된 데이터셋 파일 경로
         """
         image_paths = self._get_image_paths(image_source)
-        print(f"Found {len(image_paths)} images")
-        print(f"Using task: {self.task}")
+        logger.info(f"Found {len(image_paths)} images")
+        logger.info(f"Using task: {self.task}")
 
         # 추론 실행
         infer_results = self.inferencer.infer_batch(image_paths)
-        print(f"Successfully inferred {len(infer_results)} images")
+        logger.info(f"Successfully inferred {len(infer_results)} images")
 
         # Student instruction 가져오기
         student_instruction = self.inferencer.student_instruction
@@ -455,7 +404,7 @@ class DatasetInferencer:
             with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(dataset, f, ensure_ascii=False, indent=2)
 
-        print(f"Dataset saved to {output_path}")
+        logger.success(f"Dataset saved to {output_path}")
         return output_path
 
     def run_markdown(
@@ -478,25 +427,25 @@ class DatasetInferencer:
         from src.data.preprocessor import get_preprocessor_for_task
 
         image_paths = self._get_image_paths(image_source)
-        print(f"Found {len(image_paths)} images")
-        print(f"Using task: {self.task}")
+        logger.info(f"Found {len(image_paths)} images")
+        logger.info(f"Using task: {self.task}")
 
         # config에서 model_type 읽기
         model_type = self.config.get("model_type", "default")
 
         # 전처리기 선택
         preprocessor = get_preprocessor_for_task(self.task, model_type)
-        print(f"Using preprocessor: {preprocessor.__class__.__name__}")
+        logger.info(f"Using preprocessor: {preprocessor.__class__.__name__}")
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         # 추론 실행
         infer_results = self.inferencer.infer_batch(image_paths)
-        print(f"Successfully inferred {len(infer_results)} / {len(image_paths)} images")
+        logger.info(f"Successfully inferred {len(infer_results)} / {len(image_paths)} images")
 
         if not infer_results:
-            print("Warning: No inference results. Check model loading or image paths.")
+            logger.warning("No inference results. Check model loading or image paths.")
             return output_dir
 
         # 페이지 병합: {name}_p{page} 패턴으로 그룹화
@@ -524,7 +473,7 @@ class DatasetInferencer:
                 doc_pages[doc_name] = []
             doc_pages[doc_name].append((page_num, text))
 
-        print(f"Grouped into {len(doc_pages)} documents")
+        logger.info(f"Grouped into {len(doc_pages)} documents")
 
         # 각 문서별로 페이지 정렬 후 병합하여 저장
         saved_files = []
@@ -537,13 +486,12 @@ class DatasetInferencer:
             merged_content = "\n\n---\n\n".join(processed_pages)
 
             md_path = output_dir / f"{doc_name}.md"
-            print(f"Writing {md_path}...")
+            logger.debug(f"Writing {md_path}...")
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(merged_content)
             saved_files.append(md_path)
-            print(f"Saved: {md_path}")
 
-        print(f"Saved {len(saved_files)} markdown files to {output_dir}")
+        logger.success(f"Saved {len(saved_files)} markdown files to {output_dir}")
         return output_dir
 
 

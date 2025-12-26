@@ -12,6 +12,7 @@ from typing import Literal
 import torch
 import yaml
 from dotenv import load_dotenv
+from loguru import logger
 from transformers import AutoModel, Trainer, TrainingArguments
 
 from src.data.collator import DeepSeekOCRDataCollator
@@ -107,7 +108,7 @@ class VLMTrainer:
 
         os.environ["UNSLOTH_WARN_UNINITIALIZED"] = "0"
 
-        print(f"Loading model from {self.base_model_path}...")
+        logger.info(f"Loading model from {self.base_model_path}...")
         self.model, self.tokenizer = FastVisionModel.from_pretrained(
             self.base_model_path,
             load_in_4bit=self.load_in_4bit,
@@ -116,7 +117,7 @@ class VLMTrainer:
             unsloth_force_compile=True,
             use_gradient_checkpointing=self.use_gradient_checkpointing,
         )
-        print("Model loaded successfully!")
+        logger.success("Model loaded successfully!")
 
         return self.model, self.tokenizer
 
@@ -146,8 +147,8 @@ class VLMTrainer:
             custom_modules=custom_target_modules,
         )
 
-        print(f"Setting up LoRA for {mode} mode...")
-        print(f"Target modules: {target_modules}")
+        logger.info(f"Setting up LoRA for {mode} mode...")
+        logger.debug(f"Target modules: {target_modules}")
 
         self.model = FastVisionModel.get_peft_model(
             self.model,
@@ -179,7 +180,7 @@ class VLMTrainer:
         else:
             raise ValueError(f"Unsupported dataset format: {dataset_path.suffix}")
 
-        print(f"Loaded {len(data)} samples from {dataset_path}")
+        logger.info(f"Loaded {len(data)} samples from {dataset_path}")
         return data
 
     def train(
@@ -251,7 +252,7 @@ class VLMTrainer:
         )
 
         # 학습 시작
-        print("Starting training...")
+        logger.info("Starting training...")
         trainer_stats = self.trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
         # 메모리 통계 출력
@@ -265,13 +266,9 @@ class VLMTrainer:
         used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
         max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
 
-        print("\n" + "=" * 50)
-        print("Training Complete!")
-        print("=" * 50)
-        print(f"Training time: {trainer_stats.metrics['train_runtime']:.2f} seconds")
-        print(f"Training time: {trainer_stats.metrics['train_runtime'] / 60:.2f} minutes")
-        print(f"Peak GPU memory: {used_memory} GB / {max_memory} GB ({used_memory / max_memory * 100:.1f}%)")
-        print("=" * 50)
+        logger.success("Training Complete!")
+        logger.info(f"Training time: {trainer_stats.metrics['train_runtime']:.2f} seconds ({trainer_stats.metrics['train_runtime'] / 60:.2f} minutes)")
+        logger.info(f"Peak GPU memory: {used_memory} GB / {max_memory} GB ({used_memory / max_memory * 100:.1f}%)")
 
     def save_model(
         self,
@@ -286,14 +283,14 @@ class VLMTrainer:
         output_path.mkdir(parents=True, exist_ok=True)
 
         if save_merged:
-            print(f"Saving merged model to {output_path}...")
+            logger.info(f"Saving merged model to {output_path}...")
             self.model.save_pretrained_merged(str(output_path), self.tokenizer)
         else:
-            print(f"Saving LoRA adapters to {output_path}...")
+            logger.info(f"Saving LoRA adapters to {output_path}...")
             self.model.save_pretrained(str(output_path))
             self.tokenizer.save_pretrained(str(output_path))
 
-        print(f"Model saved to {output_path}")
+        logger.success(f"Model saved to {output_path}")
         return output_path
 
     def inference(

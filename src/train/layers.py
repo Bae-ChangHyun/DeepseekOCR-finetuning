@@ -8,6 +8,7 @@ import re
 from typing import Literal
 
 import yaml
+from loguru import logger
 
 
 def get_target_modules(
@@ -168,15 +169,12 @@ def print_trainable_params(model) -> None:
     """모델의 학습 가능한 파라미터 정보를 출력합니다."""
     info = get_trainable_params_info(model)
 
-    print("=" * 50)
-    print("Trainable Parameters Info")
-    print("=" * 50)
-    print(f"Total parameters: {info['total_params']:,}")
-    print(f"Trainable parameters: {info['trainable_params']:,}")
-    print(f"Trainable %: {info['trainable_percent']:.2f}%")
-    print(f"\nTrainable layers ({len(info['trainable_layers'])}):")
+    logger.info("Trainable Parameters Info")
+    logger.info(f"Total parameters: {info['total_params']:,}")
+    logger.info(f"Trainable parameters: {info['trainable_params']:,}")
+    logger.info(f"Trainable %: {info['trainable_percent']:.2f}%")
+    logger.debug(f"Trainable layers ({len(info['trainable_layers'])})")
     for layer in info["trainable_layers"][:20]:  # 처음 20개만 출력
-        print(f"  - {layer}")
+        logger.debug(f"  - {layer}")
     if len(info["trainable_layers"]) > 20:
-        print(f"  ... and {len(info['trainable_layers']) - 20} more")
-    print("=" * 50)
+        logger.debug(f"  ... and {len(info['trainable_layers']) - 20} more")
