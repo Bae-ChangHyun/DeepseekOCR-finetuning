@@ -1,0 +1,27 @@
+[project]
+name = "ocr-finetune"
+version = "0.1.0"
+description = "VLM Finetuning for OCR and Layout Understanding"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "addict>=2.4.0",
+    "easydict>=1.13",
+    "einops>=0.8.1",
+    "ipykernel>=7.1.0",
+    "ipython>=9.8.0",
+    "jiwer>=4.0.0",
+    "matplotlib>=3.10.8",
+    "tqdm>=4.67.1",
+    "transformers==4.56.2",
+    "unsloth>=2025.12.9",
+    # Data generation
+    "openai>=1.0.0",
+    "pymupdf>=1.24.0",
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0.0",
+    "pillow>=10.0.0",
+]
+
+[project.scripts]
+vlm-finetune = "main:main"
