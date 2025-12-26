@@ -8,13 +8,56 @@ Inference Module
 import asyncio
 import base64
 import json
+import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
 from loguru import logger
 from PIL import Image
 from tqdm import tqdm
+
+
+# 페이지 패턴: {name}_p{page}
+PAGE_PATTERN = re.compile(r"^(.+)_p(\d+)$")
+
+
+def group_images_by_document(image_paths: list[Path]) -> dict[str, list[tuple[int, Path]]]:
+    """
+    이미지 경로를 문서별로 그룹화합니다.
+
+    {name}_p{page} 패턴의 이미지는 같은 문서로 그룹화되고,
+    패턴에 맞지 않는 이미지는 단독 문서로 처리됩니다.
+
+    Args:
+        image_paths: 이미지 경로 리스트
+
+    Returns:
+        {문서명: [(페이지번호, 경로), ...]} 형태의 딕셔너리
+    """
+    doc_groups: dict[str, list[tuple[int, Path]]] = {}
+
+    for path in image_paths:
+        stem = path.stem
+        match = PAGE_PATTERN.match(stem)
+
+        if match:
+            doc_name = match.group(1)
+            page_num = int(match.group(2))
+        else:
+            doc_name = stem
+            page_num = 0
+
+        if doc_name not in doc_groups:
+            doc_groups[doc_name] = []
+        doc_groups[doc_name].append((page_num, path))
+
+    # 각 그룹 내에서 페이지 번호로 정렬
+    for doc_name in doc_groups:
+        doc_groups[doc_name].sort(key=lambda x: x[0])
+
+    return doc_groups
 
 # Optional imports
 try:
@@ -192,6 +235,70 @@ class APIInferencer(BaseInferencer):
 
         return asyncio.run(_run())
 
+    def infer_by_document_streaming(
+        self,
+        doc_groups: dict[str, list[tuple[int, Path]]],
+        on_document_complete: Callable[[str, list[tuple[int, str]]], None],
+    ) -> int:
+        """
+        문서 그룹별로 추론하고, 각 문서 완료 시 콜백 호출
+
+        Args:
+            doc_groups: {문서명: [(페이지번호, 경로), ...]} 형태의 딕셔너리
+            on_document_complete: 문서 완료 시 호출되는 콜백
+                - 인자: (문서명, [(페이지번호, 추론결과), ...])
+
+        Returns:
+            성공한 문서 수
+        """
+        async def _run():
+            semaphore = asyncio.Semaphore(self.concurrent_requests)
+            completed_docs = 0
+
+            # 각 문서에 대한 추론 태스크 생성
+            async def process_document(doc_name: str, pages: list[tuple[int, Path]]):
+                nonlocal completed_docs
+                # 문서 내 모든 페이지 병렬 추론
+                page_tasks = [
+                    self._infer_single(path, semaphore)
+                    for _, path in pages
+                ]
+                page_results = await asyncio.gather(*page_tasks)
+
+                # 결과 정리 (페이지 번호와 함께)
+                doc_results: list[tuple[int, str]] = []
+                for (page_num, _), (_, text) in zip(pages, page_results):
+                    if text is not None:
+                        doc_results.append((page_num, text.strip()))
+
+                # 페이지 번호로 정렬
+                doc_results.sort(key=lambda x: x[0])
+
+                # 콜백 호출 (동기적으로)
+                if doc_results:
+                    on_document_complete(doc_name, doc_results)
+                    completed_docs += 1
+
+                return doc_name
+
+            # 모든 문서를 병렬로 처리
+            doc_tasks = [
+                process_document(doc_name, pages)
+                for doc_name, pages in doc_groups.items()
+            ]
+
+            # 진행 상황 표시
+            for coro in tqdm(
+                asyncio.as_completed(doc_tasks),
+                total=len(doc_tasks),
+                desc="Processing documents (API)",
+            ):
+                await coro
+
+            return completed_docs
+
+        return asyncio.run(_run())
+
 
 class LocalInferencer(BaseInferencer):
     """로컬 모델을 통한 추론기"""
@@ -285,6 +392,50 @@ class LocalInferencer(BaseInferencer):
                     "text": text,
                 })
         return results
+
+    def infer_by_document_streaming(
+        self,
+        doc_groups: dict[str, list[tuple[int, Path]]],
+        on_document_complete: Callable[[str, list[tuple[int, str]]], None],
+    ) -> int:
+        """
+        문서 그룹별로 추론하고, 각 문서 완료 시 콜백 호출
+
+        Local 모드는 GPU 제약으로 순차 처리하지만,
+        각 문서 완료 시 즉시 콜백이 호출되어 마크다운 저장 가능
+
+        Args:
+            doc_groups: {문서명: [(페이지번호, 경로), ...]} 형태의 딕셔너리
+            on_document_complete: 문서 완료 시 호출되는 콜백
+                - 인자: (문서명, [(페이지번호, 추론결과), ...])
+
+        Returns:
+            성공한 문서 수
+        """
+        self._load_model()
+        completed_docs = 0
+        total_pages = sum(len(pages) for pages in doc_groups.values())
+
+        with tqdm(total=total_pages, desc="Processing documents (Local)") as pbar:
+            for doc_name, pages in doc_groups.items():
+                doc_results: list[tuple[int, str]] = []
+
+                for page_num, path in pages:
+                    text = self.infer(path)
+                    if text is not None:
+                        doc_results.append((page_num, text))
+                    pbar.update(1)
+
+                # 페이지 번호로 정렬
+                doc_results.sort(key=lambda x: x[0])
+
+                # 콜백 호출
+                if doc_results:
+                    on_document_complete(doc_name, doc_results)
+                    completed_docs += 1
+                    pbar.set_postfix({"saved": f"{doc_name}.md"})
+
+        return completed_docs
 
 
 class DatasetInferencer:
@@ -413,8 +564,10 @@ class DatasetInferencer:
         output_dir: str | Path,
     ) -> Path:
         """
-        추론 실행 및 마크다운 파일로 저장
-        같은 PDF의 페이지들({name}_p{page} 패턴)은 하나의 마크다운으로 병합
+        추론 실행 및 마크다운 파일로 저장 (스트리밍 방식)
+
+        같은 PDF의 페이지들({name}_p{page} 패턴)은 하나의 마크다운으로 병합되며,
+        각 문서 추론 완료 시 즉시 마크다운 파일이 저장됩니다.
 
         Args:
             image_source: 이미지 파일 또는 이미지가 있는 디렉토리
@@ -423,7 +576,6 @@ class DatasetInferencer:
         Returns:
             출력 디렉토리 경로
         """
-        import re
         from src.data.preprocessor import get_preprocessor_for_task
 
         image_paths = self._get_image_paths(image_source)
@@ -440,58 +592,32 @@ class DatasetInferencer:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 추론 실행
-        infer_results = self.inferencer.infer_batch(image_paths)
-        logger.info(f"Successfully inferred {len(infer_results)} / {len(image_paths)} images")
+        # 이미지를 문서별로 그룹화 (추론 전에!)
+        doc_groups = group_images_by_document(image_paths)
+        logger.info(f"Grouped into {len(doc_groups)} documents")
 
-        if not infer_results:
-            logger.warning("No inference results. Check model loading or image paths.")
-            return output_dir
+        # 저장된 파일 추적
+        saved_files: list[Path] = []
 
-        # 페이지 병합: {name}_p{page} 패턴으로 그룹화
-        # 패턴: name_p0001.png, name_p0002.png -> name.md
-        page_pattern = re.compile(r"^(.+)_p(\d+)$")
-
-        # 결과를 문서별로 그룹화
-        doc_pages: dict[str, list[tuple[int, str]]] = {}
-
-        for result in infer_results:
-            image_path = Path(result["image_path"])
-            stem = image_path.stem
-            text = result["text"]
-
-            match = page_pattern.match(stem)
-            if match:
-                doc_name = match.group(1)
-                page_num = int(match.group(2))
-            else:
-                # 패턴에 맞지 않으면 단독 문서로 처리
-                doc_name = stem
-                page_num = 0
-
-            if doc_name not in doc_pages:
-                doc_pages[doc_name] = []
-            doc_pages[doc_name].append((page_num, text))
-
-        logger.info(f"Grouped into {len(doc_pages)} documents")
-
-        # 각 문서별로 페이지 정렬 후 병합하여 저장
-        saved_files = []
-        for doc_name, pages in doc_pages.items():
-            # 페이지 번호로 정렬
-            pages.sort(key=lambda x: x[0])
-
+        def save_document_markdown(doc_name: str, pages: list[tuple[int, str]]):
+            """문서 추론 완료 시 호출되는 콜백 - 즉시 마크다운 저장"""
             # 각 페이지 전처리 후 병합
             processed_pages = [preprocessor.process(text) for _, text in pages]
             merged_content = "\n\n---\n\n".join(processed_pages)
 
             md_path = output_dir / f"{doc_name}.md"
-            logger.debug(f"Writing {md_path}...")
             with open(md_path, "w", encoding="utf-8") as f:
                 f.write(merged_content)
             saved_files.append(md_path)
+            logger.info(f"Saved: {md_path.name} ({len(pages)} pages)")
 
-        logger.success(f"Saved {len(saved_files)} markdown files to {output_dir}")
+        # 스트리밍 방식으로 추론 실행 (문서 완료 시 즉시 저장)
+        completed = self.inferencer.infer_by_document_streaming(
+            doc_groups=doc_groups,
+            on_document_complete=save_document_markdown,
+        )
+
+        logger.success(f"Saved {completed} markdown files to {output_dir}")
         return output_dir
 
 
