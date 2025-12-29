@@ -19,18 +19,79 @@ DeepSeek-OCR 모델을 위한 프로페셔널 파인튜닝 및 추론 도구
 
 ---
 
-## 소개
+## Introduction
 
-**DeepSeek-OCR 파인튜닝 툴킷**은 문서 OCR 작업을 위한 포괄적인 파인튜닝 및 추론 파이프라인입니다.
+**DeepSeek-OCR 파인튜닝 툴킷**은 unsloth의 DeepSeek-OCR 파인튜닝 가이드를 참고하여,
+**Pseudo Labeling** 방식으로 DeepSeek-OCR 모델을 파인튜닝합니다. 외부 Teacher 모델로부터 생성한 라벨 데이터를 기반으로 DeepSeek-OCR 모델을 학습시키기 편리하게 만든 도구입니다.
 
-### 왜 이 프로젝트를 사용해야 하나요?
 
-- **문제점**: 기존 OCR 도구들은 특정 도메인(의료, 법률, 학술 등)에서 정확도가 낮고, 복잡한 레이아웃을 처리하기 어렵습니다.
-- **해결책**: LoRA 기반 효율적 파인튜닝으로 도메인별 데이터에 모델을 최적화하고, Vision Encoder와 LLM을 선택적으로 학습할 수 있습니다.
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             Pseudo Labeling Pipeline                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐     pdf2img      ┌─────────────────┐                       │
+│  │             │ ───────────────► │                 │                       │
+│  │  PDF 문서   │                  │  이미지 데이터셋  │──┐                    │
+│  │             │                  │  (images/*.png) │  │                    │
+│  └─────────────┘                  └─────────────────┘  │                    │
+│                                            │           │                    │
+│                                            ▼           │                    │
+│                                   ┌─────────────────┐  │                    │
+│                                   │  Teacher Model  │  │                    │
+│                                   │  (외부 API/vLLM) │  │                    │
+│                                   │                 │  │                    │
+│                                   │  infer --task   │  │                    │
+│                                   └────────┬────────┘  │                    │
+│                                            │           │                    │
+│                                            ▼           │                    │
+│                                   ┌─────────────────┐  │                    │
+│                                   │   라벨 데이터    │  │                    │
+│                                   │ (Markdown 텍스트)│  │                    │
+│                                   └────────┬────────┘  │                    │
+│                                            │           │                    │
+│                                            ▼           ▼                    │
+│                                   ┌─────────────────────────┐               │
+│                                   │     학습 데이터셋         │               │
+│                                   │     (data.jsonl)        │               │
+│                                   │  ┌───────┬───────────┐  │               │
+│                                   │  │ image │   label   │  │               │
+│                                   │  ├───────┼───────────┤  │               │
+│                                   │  │ .png  │ markdown  │  │               │
+│                                   │  └───────┴───────────┘  │               │
+│                                   └────────────┬────────────┘               │
+│                                                │                            │
+│                                                ▼                            │
+│                                   ┌─────────────────────────┐               │
+│                                   │    Student Model        │               │
+│                                   │    (DeepSeek-OCR)       │               │
+│                                   │                         │               │
+│                                   │  train --mode vision    │               │
+│                                   └────────────┬────────────┘               │
+│                                                │                            │
+│                                                ▼                            │
+│                                   ┌─────────────────────────┐               │
+│                                   │   Fine-tuned Model      │               │
+│                                   │   (LoRA Adapter)        │               │
+│                                   └─────────────────────────┘               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-### 배경
+**단계별 요약:**
+1. **pdf2img**: PDF → 이미지 변환
+2. **infer (Teacher)**: 외부 모델로 이미지 추론 → 라벨(Markdown) 생성
+3. **데이터셋 구성**: 이미지 + 라벨 → JSONL 형식
+4. **train (Student)**: DeepSeek-OCR LoRA 파인튜닝
 
-이 프로젝트는 실제 문서 처리 워크플로우를 간소화하기 위해 개발되었습니다. PDF → 이미지 변환 → OCR → 후처리의 복잡한 과정을 단일 CLI로 통합했습니다.
+
+<div align="center">
+
+<a href="https://docs.unsloth.ai/models/deepseek-ocr-how-to-run-and-fine-tune"><img alt="unsloth logo" src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20black%20text.png" height="50" style="max-width: 100%;"></a>
+
+<a href="https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/Deepseek_OCR_(3B).ipynb#scrollTo=6bZsfBuZDeCL"><img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/start free finetune button.png" width="200"></a>
+
+</div>
 
 ---
 
@@ -52,66 +113,29 @@ DeepSeek-OCR 모델을 위한 프로페셔널 파인튜닝 및 추론 도구
 
 ---
 
-## 빠른 시작
+## Quick Start
 
-### 필수 요구사항
+### Requirements
 
-```bash
-# Python 3.12 이상 필요
-python --version
-
-# uv 패키지 매니저 설치 (권장)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 설치
+### Installation
 
 ```bash
 # 저장소 클론
 git clone https://github.com/your-username/ocr_finetune.git
 cd ocr_finetune
 
+# 가상환경 생성 및 활성화
+uv venv
+source .venv/bin/activate
+
 # 의존성 설치 (uv 권장)
 uv sync
-
-# 또는 pip 사용
-pip install -e .
 ```
-
-### 첫 번째 추론 실행
-
-```bash
-# 1. 설정 파일 준비
-cp config/examples/teacher_api.example.yaml config/teacher_api.yaml
-cp config/examples/prompts.example.yaml config/prompts.yaml
-
-# 2. config/teacher_api.yaml 수정 (API URL, 모델명 설정)
-# vim config/teacher_api.yaml
-
-# 3. PDF에서 직접 마크다운 생성
-uv run main.py infer --pdf document.pdf --config config/teacher_api.yaml --task document
-
-# 결과: document.md 파일이 생성됩니다
-```
-
-<details>
-<summary><strong>이미지 폴더에서 추론하기</strong></summary>
-
-```bash
-# PDF를 이미지로 먼저 변환
-uv run main.py pdf2img --source document.pdf --output ./images --dpi 300
-
-# 이미지 폴더에서 추론
-uv run main.py infer --images ./images --config config/teacher_api.yaml --task document
-```
-
-</details>
-
 ---
 
-## 사용법
+## Usage
 
-### 1. PDF를 이미지로 변환
+### 1. pdf2img: PDF를 이미지로 변환
 
 ```bash
 uv run main.py pdf2img --source document.pdf --output ./images --dpi 200
@@ -126,14 +150,16 @@ uv run main.py pdf2img --source document.pdf --output ./images --dpi 200
 | `--start-page` | 시작 페이지 번호 | `1` |
 | `--end-page` | 종료 페이지 번호 | (전체) |
 
-### 2. 추론 실행
+### 2. inference
+
+teacher 모델을 이용하여 학습 데이터셋을 생성하거나ㅣ, 추후 파인튜닝된 모델을 테스트할 때 이용됩니다.
 
 ```bash
 # PDF에서 직접 추론 (권장)
-uv run main.py infer --pdf document.pdf --config config/teacher_api.yaml --task document
+uv run main.py infer --pdf document.pdf --config config/api_model.yaml --task document
 
 # 이미지에서 추론
-uv run main.py infer --images ./images --config config/teacher_api.yaml --task ocr
+uv run main.py infer --images ./images --config config/api_model.yaml --task ocr
 
 # 사용 가능한 태스크 목록 보기
 uv run main.py infer --config config/teacher_api.yaml --list-prompts
@@ -216,7 +242,7 @@ uv run main.py evaluate --dataset eval.jsonl --task document --output results.js
 
 ---
 
-## 설정 가이드
+## How to edit config files
 
 추론 설정 파일의 핵심 옵션들을 설명합니다.
 
@@ -245,6 +271,7 @@ local:
 ### `model_type`: 출력 후처리 방식
 
 모델 출력에서 특수 태그를 제거하는 전처리기를 선택합니다.
+(마크다운으로 결과를 보기 편리하게 함)
 
 | 값 | 설명 | 제거하는 태그 |
 |:---:|:---|:---|
@@ -288,20 +315,30 @@ model_type: "default"
 
 `prompts` 섹션에 정의된 키를 선택합니다. 각 태스크는 `system`과 `user` 프롬프트를 가집니다.
 
+> **⚠️ 주의**: `ocr`, `document` 등 기본 태스크는 **DeepSeek-OCR 모델이 학습된 프롬프트**입니다.
+> 이 프롬프트들을 수정하면 모델 성능이 저하될 수 있습니다.
+> 새로운 태스크가 필요하면 기존 프롬프트를 수정하지 말고 **새 키를 추가**하세요.
+
 ```yaml
 # config/teacher_api.yaml
 prompts:
-  ocr:                    # --task ocr
+  # ⚠️ 기본 태스크 - 수정하지 마세요
+  ocr:                    # --task ocr (DeepSeek-OCR 기본)
     system: "You are an OCR assistant..."
     user: "Extract all text from this image."
 
-  document:               # --task document
+  document:               # --task document (DeepSeek-OCR 기본)
     system: "You are a document parsing assistant..."
     user: "Convert this document to Markdown format."
 
-  invoice:                # --task invoice (커스텀 태스크)
+  # ✅ 커스텀 태스크 - 자유롭게 추가하세요
+  invoice:                # --task invoice (사용자 정의)
     system: "You are an invoice parser..."
     user: "Extract invoice details as JSON."
+
+  medical_report:         # --task medical_report (사용자 정의)
+    system: "You are a medical document parser..."
+    user: "Extract patient information and diagnosis."
 ```
 
 ```bash
@@ -504,20 +541,6 @@ Downloading unsloth/DeepSeek-OCR from Hugging Face...
 ```bash
 huggingface-cli download unsloth/DeepSeek-OCR --local-dir models/deepseek_ocr
 ```
-
----
-
-## 비교
-
-| 기능 | OCR Finetune | 일반 OCR 도구 | Tesseract |
-|:---:|:---:|:---:|:---:|
-| **도메인 적응** | ✅ LoRA 파인튜닝 | ❌ 불가능 | ⚠️ 제한적 |
-| **복잡한 레이아웃** | ✅ Vision+LLM | ⚠️ 제한적 | ❌ 약함 |
-| **마크다운 출력** | ✅ 구조화된 출력 | ❌ 텍스트만 | ❌ 텍스트만 |
-| **PDF 직접 입력** | ✅ 지원 | ⚠️ 변환 필요 | ⚠️ 변환 필요 |
-| **비용** | **무료** | API 비용 발생 | **무료** |
-
----
 
 ## 트러블슈팅
 

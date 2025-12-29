@@ -21,16 +21,76 @@ A professional finetuning and inference toolkit for the DeepSeek-OCR model
 
 ## Introduction
 
-**DeepSeek-OCR Finetuning Toolkit** is a comprehensive finetuning and inference pipeline for document OCR tasks.
+**DeepSeek-OCR Finetuning Toolkit** is built with reference to Unsloth's DeepSeek-OCR finetuning guide, using a **Pseudo Labeling** approach to finetune the DeepSeek-OCR model. This tool makes it convenient to train the DeepSeek-OCR model based on label data generated from external Teacher models.
 
-### Why Use This Project?
 
-- **Problem**: Traditional OCR tools have low accuracy in specific domains (medical, legal, academic, etc.) and struggle with complex layouts.
-- **Solution**: Optimize models for domain-specific data with LoRA-based efficient finetuning, with selective training of Vision Encoder and LLM layers.
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             Pseudo Labeling Pipeline                        │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌─────────────┐     pdf2img      ┌─────────────────┐                       │
+│  │             │ ───────────────► │                 │                       │
+│  │    PDF      │                  │  Image Dataset  │──┐                    │
+│  │  Documents  │                  │  (images/*.png) │  │                    │
+│  └─────────────┘                  └─────────────────┘  │                    │
+│                                            │           │                    │
+│                                            ▼           │                    │
+│                                   ┌─────────────────┐  │                    │
+│                                   │  Teacher Model  │  │                    │
+│                                   │  (API/vLLM)     │  │                    │
+│                                   │                 │  │                    │
+│                                   │  infer --task   │  │                    │
+│                                   └────────┬────────┘  │                    │
+│                                            │           │                    │
+│                                            ▼           │                    │
+│                                   ┌─────────────────┐  │                    │
+│                                   │   Label Data    │  │                    │
+│                                   │ (Markdown text) │  │                    │
+│                                   └────────┬────────┘  │                    │
+│                                            │           │                    │
+│                                            ▼           ▼                    │
+│                                   ┌─────────────────────────┐               │
+│                                   │    Training Dataset     │               │
+│                                   │      (data.jsonl)       │               │
+│                                   │  ┌───────┬───────────┐  │               │
+│                                   │  │ image │   label   │  │               │
+│                                   │  ├───────┼───────────┤  │               │
+│                                   │  │ .png  │ markdown  │  │               │
+│                                   │  └───────┴───────────┘  │               │
+│                                   └────────────┬────────────┘               │
+│                                                │                            │
+│                                                ▼                            │
+│                                   ┌─────────────────────────┐               │
+│                                   │    Student Model        │               │
+│                                   │    (DeepSeek-OCR)       │               │
+│                                   │                         │               │
+│                                   │  train --mode vision    │               │
+│                                   └────────────┬────────────┘               │
+│                                                │                            │
+│                                                ▼                            │
+│                                   ┌─────────────────────────┐               │
+│                                   │   Fine-tuned Model      │               │
+│                                   │   (LoRA Adapter)        │               │
+│                                   └─────────────────────────┘               │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-### Background
+**Step-by-step summary:**
+1. **pdf2img**: Convert PDF → images
+2. **infer (Teacher)**: External model inference → generate labels (Markdown)
+3. **Dataset creation**: Images + labels → JSONL format
+4. **train (Student)**: DeepSeek-OCR LoRA finetuning
 
-This project was developed to streamline real-world document processing workflows. It consolidates the complex process of PDF → image conversion → OCR → post-processing into a single CLI tool.
+
+<div align="center">
+
+<a href="https://docs.unsloth.ai/models/deepseek-ocr-how-to-run-and-fine-tune"><img alt="unsloth logo" src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/unsloth%20logo%20black%20text.png" height="50" style="max-width: 100%;"></a>
+
+<a href="https://colab.research.google.com/github/unslothai/notebooks/blob/main/nb/Deepseek_OCR_(3B).ipynb#scrollTo=6bZsfBuZDeCL"><img src="https://raw.githubusercontent.com/unslothai/unsloth/main/images/start free finetune button.png" width="200"></a>
+
+</div>
 
 ---
 
@@ -48,21 +108,13 @@ This project was developed to streamline real-world document processing workflow
 
 ### API and Local Model Support
 * **OpenAI-Compatible API**: Teacher model inference via vLLM, OpenAI API, etc.
-* **Local Models**: Direct inference on local GPUs (no API required)
+* **Local Model**: Direct inference on local GPU (no API required)
 
 ---
 
 ## Quick Start
 
-### Prerequisites
-
-```bash
-# Python 3.12+ required
-python --version
-
-# Install uv package manager (recommended)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+### Requirements
 
 ### Installation
 
@@ -71,47 +123,18 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/your-username/ocr_finetune.git
 cd ocr_finetune
 
+# Create and activate virtual environment
+uv venv
+source .venv/bin/activate
+
 # Install dependencies (uv recommended)
 uv sync
-
-# Or use pip
-pip install -e .
 ```
-
-### First Inference Run
-
-```bash
-# 1. Prepare configuration files
-cp config/examples/teacher_api.example.yaml config/teacher_api.yaml
-cp config/examples/prompts.example.yaml config/prompts.yaml
-
-# 2. Edit config/teacher_api.yaml (set API URL, model name)
-# vim config/teacher_api.yaml
-
-# 3. Generate markdown directly from PDF
-uv run main.py infer --pdf document.pdf --config config/teacher_api.yaml --task document
-
-# Result: document.md file is created
-```
-
-<details>
-<summary><strong>Inference from Image Folder</strong></summary>
-
-```bash
-# First convert PDF to images
-uv run main.py pdf2img --source document.pdf --output ./images --dpi 300
-
-# Inference from image folder
-uv run main.py infer --images ./images --config config/teacher_api.yaml --task document
-```
-
-</details>
-
 ---
 
 ## Usage
 
-### 1. Convert PDF to Images
+### 1. pdf2img: Convert PDF to Images
 
 ```bash
 uv run main.py pdf2img --source document.pdf --output ./images --dpi 200
@@ -123,17 +146,19 @@ uv run main.py pdf2img --source document.pdf --output ./images --dpi 200
 | `--output` | Output directory | `./output_images` |
 | `--dpi` | Image resolution | `200` |
 | `--format` | Image format (png, jpg) | `png` |
-| `--start-page` | Starting page number | `1` |
-| `--end-page` | Ending page number | (all) |
+| `--start-page` | Start page number | `1` |
+| `--end-page` | End page number | (all) |
 
-### 2. Run Inference
+### 2. inference
+
+Used to generate training datasets using a teacher model, or to test finetuned models later.
 
 ```bash
-# Inference directly from PDF (recommended)
-uv run main.py infer --pdf document.pdf --config config/teacher_api.yaml --task document
+# Direct inference from PDF (recommended)
+uv run main.py infer --pdf document.pdf --config config/api_model.yaml --task document
 
 # Inference from images
-uv run main.py infer --images ./images --config config/teacher_api.yaml --task ocr
+uv run main.py infer --images ./images --config config/api_model.yaml --task ocr
 
 # List available tasks
 uv run main.py infer --config config/teacher_api.yaml --list-prompts
@@ -150,18 +175,18 @@ uv run main.py infer --config config/teacher_api.yaml --list-prompts
 | `--list-prompts` | List available tasks | - |
 
 <details>
-<summary><strong>Output Format Details</strong></summary>
+<summary><strong>View Output Format Details</strong></summary>
 
-#### JSONL Format (For Training)
+#### JSONL Format (for training)
 Each line is a single JSON object (suitable for large datasets):
 
 ```json
-{"messages": [{"role": "<|User|>", "content": "<image>\nConvert this document to Markdown.", "images": ["page1.png"]}, {"role": "<|Assistant|>", "content": "# Title\n\nContent..."}]}
+{"messages": [{"role": "<|User|>", "content": "<image>\nConvert this document to markdown.", "images": ["page1.png"]}, {"role": "<|Assistant|>", "content": "# Title\n\nContent..."}]}
 ```
 
-#### Markdown Format (For Document Review)
-- Images with `{name}_p{page}.png` pattern are auto-merged into `{name}.md`
-- Each document is saved immediately upon completion (streaming)
+#### Markdown Format (for document review)
+- Images with `{name}_p{page}.png` pattern are automatically merged into `{name}.md`
+- Each document is saved immediately upon inference completion (streaming)
 - View completed documents while inference is still running
 
 **Example**:
@@ -200,8 +225,8 @@ uv run main.py train --dataset data.jsonl --mode both
 
 | Mode | Target | Use Case |
 |:---:|:---:|:---:|
-| **vision** | Vision Encoder (qkv_proj, fc1, fc2, etc.) | New document layouts, handwriting recognition |
-| **llm** | Language Model (q_proj, gate_proj, etc.) | Domain-specific terminology, output format |
+| **vision** | Vision Encoder (qkv_proj, fc1, fc2, etc.) | New document layouts, handwriting recognition improvement |
+| **llm** | Language Model (q_proj, gate_proj, etc.) | Domain-specific terminology, output format improvement |
 | **both** | Entire model | Completely new domain, maximum performance needed |
 
 **Recommendation**: Start with `vision` mode in most cases. The LLM already has general language capabilities.
@@ -216,11 +241,11 @@ uv run main.py evaluate --dataset eval.jsonl --task document --output results.js
 
 ---
 
-## Configuration Guide
+## How to Edit Config Files
 
 This section explains the key options in inference configuration files.
 
-### `type`: Inference Mode
+### `type`: Inference Mode Selection
 
 | Value | Description | When to Use |
 |:---:|:---|:---|
@@ -245,6 +270,7 @@ local:
 ### `model_type`: Output Postprocessing
 
 Selects the preprocessor that removes special tags from model output.
+(Makes results easier to view as markdown)
 
 | Value | Description | Tags Removed |
 |:---:|:---|:---|
@@ -288,20 +314,30 @@ model_type: "default"
 
 Selects a key defined in the `prompts` section. Each task has `system` and `user` prompts.
 
+> **⚠️ Warning**: Default tasks like `ocr`, `document` are **prompts that DeepSeek-OCR was trained on**.
+> Modifying these prompts may degrade model performance.
+> If you need new tasks, **add new keys** instead of modifying existing prompts.
+
 ```yaml
 # config/teacher_api.yaml
 prompts:
-  ocr:                    # --task ocr
+  # ⚠️ Default tasks - DO NOT modify
+  ocr:                    # --task ocr (DeepSeek-OCR default)
     system: "You are an OCR assistant..."
     user: "Extract all text from this image."
 
-  document:               # --task document
+  document:               # --task document (DeepSeek-OCR default)
     system: "You are a document parsing assistant..."
     user: "Convert this document to Markdown format."
 
-  invoice:                # --task invoice (custom task)
+  # ✅ Custom tasks - Add freely
+  invoice:                # --task invoice (user-defined)
     system: "You are an invoice parser..."
     user: "Extract invoice details as JSON."
+
+  medical_report:         # --task medical_report (user-defined)
+    system: "You are a medical document parser..."
+    user: "Extract patient information and diagnosis."
 ```
 
 ```bash
@@ -340,20 +376,20 @@ model:
   load_in_4bit: false
   use_gradient_checkpointing: "unsloth"
 
-# LoRA configuration
+# LoRA settings
 lora:
   r: 16
   lora_alpha: 16
   lora_dropout: 0
 
-  # Applied with --mode vision
+  # Applied when --mode vision
   vision_target_modules:
     - "qkv_proj"
     - "out_proj"
     - "fc1"
     - "fc2"
 
-  # Applied with --mode llm
+  # Applied when --mode llm
   llm_target_modules:
     - "q_proj"
     - "k_proj"
@@ -380,7 +416,7 @@ image:
 ```
 
 <details>
-<summary><strong>Image Size Presets</strong></summary>
+<summary><strong>View Image Size Presets</strong></summary>
 
 | Preset | base_size | image_size | crop_mode | Use Case |
 |:---:|:---:|:---:|:---:|:---:|
@@ -388,7 +424,7 @@ image:
 | Small | 640 | 640 | false | General documents |
 | Base | 1024 | 1024 | false | High-resolution documents |
 | **Gundam** | **1024** | **640** | **true** | **Recommended (performance/speed balance)** |
-| Large | 1280 | 1280 | false | Maximum quality |
+| Large | 1280 | 1280 | false | Highest quality |
 
 </details>
 
@@ -453,8 +489,8 @@ Training datasets use JSONL format:
 ```
 
 **Notes**:
-- `images` field is an array of image file paths
-- `content` must include the `<image>` token
+- The `images` field is an array of image file paths
+- The `content` must include the `<image>` token
 - Each line is an independent JSON object (not a JSON array)
 
 ---
@@ -465,13 +501,13 @@ Training datasets use JSONL format:
 ocr_finetune/
 ├── main.py                 # CLI entry point
 ├── config/
-│   ├── examples/           # Configuration examples
+│   ├── examples/           # Config file examples
 │   │   ├── train_config.example.yaml
 │   │   ├── teacher_api.example.yaml
 │   │   ├── teacher_local.example.yaml
 │   │   └── prompts.example.yaml
-│   ├── train_config.yaml   # Training configuration
-│   ├── teacher_api.yaml    # API inference configuration
+│   ├── train_config.yaml   # Training config
+│   ├── teacher_api.yaml    # API inference config
 │   └── prompts.yaml        # Prompt definitions
 ├── src/
 │   ├── data/
@@ -500,24 +536,10 @@ Downloading unsloth/DeepSeek-OCR from Hugging Face...
 ✓ Model downloaded to models/deepseek_ocr
 ```
 
-**Manual Download** (optional):
+**Manual download** (optional):
 ```bash
 huggingface-cli download unsloth/DeepSeek-OCR --local-dir models/deepseek_ocr
 ```
-
----
-
-## Comparison
-
-| Feature | OCR Finetune | Generic OCR Tools | Tesseract |
-|:---:|:---:|:---:|:---:|
-| **Domain Adaptation** | ✅ LoRA finetuning | ❌ Not possible | ⚠️ Limited |
-| **Complex Layouts** | ✅ Vision+LLM | ⚠️ Limited | ❌ Weak |
-| **Markdown Output** | ✅ Structured output | ❌ Text only | ❌ Text only |
-| **Direct PDF Input** | ✅ Supported | ⚠️ Conversion needed | ⚠️ Conversion needed |
-| **Cost** | **Free** | API costs | **Free** |
-
----
 
 ## Troubleshooting
 
@@ -544,7 +566,7 @@ model:
 # Set Hugging Face token (for private models)
 export HF_TOKEN="your_huggingface_token"
 
-# Or manually download
+# Or download manually
 huggingface-cli login
 huggingface-cli download unsloth/DeepSeek-OCR --local-dir models/deepseek_ocr
 ```
@@ -571,7 +593,7 @@ curl http://localhost:8000/v1/models
 | Category | Technology |
 |:---:|:---:|
 | **Language** | Python 3.12+ |
-| **Package Manager** | uv |
+| **Package Management** | uv |
 | **Base Model** | DeepSeek-OCR (Unsloth) |
 | **Finetuning** | LoRA, PEFT |
 | **Optimization** | Unsloth, 4-bit Quantization |
