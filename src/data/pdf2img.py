@@ -94,6 +94,8 @@ class PDF2ImageConverter:
         self,
         pdf_dir: str | Path,
         output_dir: str | Path,
+        start_page: int | None = None,
+        end_page: int | None = None,
     ) -> list[Path]:
         """
         디렉토리 내 모든 PDF를 이미지로 변환합니다.
@@ -101,6 +103,8 @@ class PDF2ImageConverter:
         Args:
             pdf_dir: PDF 파일들이 있는 디렉토리
             output_dir: 출력 이미지 디렉토리
+            start_page: 시작 페이지 (1-indexed, 각 PDF에 적용, 범위 초과시 클램핑)
+            end_page: 끝 페이지 (1-indexed, 각 PDF에 적용, 범위 초과시 클램핑)
 
         Returns:
             생성된 이미지 파일 경로 리스트
@@ -115,7 +119,9 @@ class PDF2ImageConverter:
         all_image_paths = []
 
         for pdf_path in tqdm(pdf_files, desc="Processing PDFs"):
-            image_paths = self.convert_single_pdf(pdf_path, output_dir)
+            image_paths = self.convert_single_pdf(
+                pdf_path, output_dir, start_page, end_page
+            )
             all_image_paths.extend(image_paths)
 
         return all_image_paths
@@ -145,7 +151,7 @@ class PDF2ImageConverter:
         if source.is_file() and source.suffix.lower() == ".pdf":
             return self.convert_single_pdf(source, output_dir, start_page, end_page)
         elif source.is_dir():
-            return self.convert_directory(source, output_dir)
+            return self.convert_directory(source, output_dir, start_page, end_page)
         else:
             raise ValueError(
                 f"Source must be a PDF file or directory containing PDFs: {source}"
