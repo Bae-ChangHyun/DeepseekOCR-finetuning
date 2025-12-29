@@ -32,6 +32,9 @@ def get_target_modules(
     if custom_modules:
         return custom_modules
 
+    # 프로젝터는 vision-language alignment를 담당하므로 모든 모드에 기본 포함
+    projector_modules = get_projector_modules()
+
     # 설정 파일에서 로드 시도
     if config_path:
         try:
@@ -39,24 +42,35 @@ def get_target_modules(
                 config = yaml.safe_load(f)
                 lora_config = config.get("lora", {})
 
+                # config에서 projector 모듈 로드 (있으면 사용, 없으면 기본값)
+                config_projector = lora_config.get("projector_target_modules", [])
+                if config_projector:
+                    projector_modules = config_projector
+
                 if mode == "vision":
                     modules = lora_config.get("vision_target_modules", [])
                     if modules:
-                        return modules
+                        return projector_modules + modules
                 elif mode == "llm":
                     modules = lora_config.get("llm_target_modules", [])
                     if modules:
-                        return modules
+                        return projector_modules + modules
+                elif mode == "both":
+                    vision_modules = lora_config.get("vision_target_modules", [])
+                    llm_modules = lora_config.get("llm_target_modules", [])
+                    if vision_modules and llm_modules:
+                        return projector_modules + vision_modules + llm_modules
         except Exception:
             pass
 
     # 기본 타겟 모듈
+
     if mode == "vision":
-        return get_vision_target_modules()
+        return projector_modules + get_vision_target_modules()
     elif mode == "llm":
-        return get_llm_target_modules()
+        return projector_modules + get_llm_target_modules()
     elif mode == "both":
-        return get_vision_target_modules() + get_llm_target_modules()
+        return projector_modules + get_vision_target_modules() + get_llm_target_modules()
     else:
         raise ValueError(f"Unknown mode: {mode}. Use 'vision', 'llm', or 'both'")
 

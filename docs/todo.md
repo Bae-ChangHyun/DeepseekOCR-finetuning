@@ -5,6 +5,12 @@
 
 ## 완료된 작업
 
+### Projector 학습 기본 포함 (2024-12-29)
+- [x] 모든 모드(vision/llm/both)에 프로젝터 자동 포함
+- [x] `src/train/layers.py`: `get_target_modules()`에서 프로젝터 모듈 기본 추가
+- [x] `config/train_config.yaml`: `projector_target_modules` 섹션 추가
+- [x] `docs/vlm_파인튜닝.md`: 현재 프로젝트 구현 섹션 추가
+
 ### CLI 인자 정리 (2024-12-29)
 
 #### 변경 사항
