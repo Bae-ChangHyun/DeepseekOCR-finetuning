@@ -109,14 +109,14 @@ def cmd_infer(args):
     # 체크포인트 재개 모드 처리
     config_path = args.config
     task = args.task
-    images = args.images
+    images = args.img
     output = args.output
     checkpoint_path = None
 
-    if args.checkpoint:
-        # --checkpoint가 파일 경로로 제공된 경우
-        if args.checkpoint != "auto" and Path(args.checkpoint).exists():
-            checkpoint_path = Path(args.checkpoint)
+    if args.resume:
+        # --resume가 파일 경로로 제공된 경우
+        if args.resume != "auto" and Path(args.resume).exists():
+            checkpoint_path = Path(args.resume)
             checkpoint_data = DatasetInferencer.load_inference_checkpoint(checkpoint_path)
 
             if checkpoint_data:
@@ -143,7 +143,7 @@ def cmd_infer(args):
                 # 인자가 제공된 경우 검증
                 is_valid, warnings = DatasetInferencer.validate_inference_checkpoint(
                     checkpoint_data,
-                    image_source=args.images if args.images != f"./data/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}" else None,
+                    image_source=args.img if args.img != f"./data/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}" else None,
                     config_path=args.config if args.config else None,
                     task=args.task if args.task != "document" else None,
                 )
@@ -174,8 +174,8 @@ def cmd_infer(args):
         else:
             output = f"./data/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
 
-    # checkpoint 경로 결정 (--checkpoint만 사용된 경우)
-    if args.checkpoint == "auto":
+    # checkpoint 경로 결정 (--resume만 사용된 경우)
+    if args.resume == "auto":
         checkpoint_path = Path(output).with_suffix(".checkpoint.json")
 
     # PDF 입력 처리: PDF → 이미지 변환 후 추론
@@ -206,8 +206,8 @@ def cmd_infer(args):
         logger.info(f"Task: {task}")
         logger.info(f"Output: {output}")
         logger.info(f"Format: {'markdown' if is_markdown else output_format}")
-        if args.checkpoint:
-            logger.info(f"Checkpoint mode: enabled")
+        if args.resume:
+            logger.info(f"Resume mode: enabled")
 
         if is_markdown:
             # 마크다운 파일로 저장 (같은 PDF 페이지는 자동 병합)
@@ -218,7 +218,7 @@ def cmd_infer(args):
                 task=task,
             )
             logger.success(f"Markdown files saved to: {output_dir}")
-        elif args.checkpoint:
+        elif args.resume:
             # 체크포인트 모드로 데이터셋 저장
             inferencer = DatasetInferencer(config_path, task)
             output_path = inferencer.run_with_checkpoint(
@@ -443,25 +443,31 @@ def main():
         epilog="""
 Examples:
   # Convert PDF to images (optional, can use --pdf directly in infer)
-  uv run main.py pdf2img --source document.pdf
+  uv run main.py pdf2img -s document.pdf
 
   # List available tasks
-  uv run main.py infer --config config/teacher_api.yaml --list-prompts
+  uv run main.py infer -c config/teacher_api.yaml -l
 
   # Run inference from images
-  uv run main.py infer --images ./images --config config/teacher_api.yaml --task document
+  uv run main.py infer -i ./images -c config/teacher_api.yaml -t document
 
   # Run inference directly from PDF (converts internally)
-  uv run main.py infer --pdf document.pdf --config config/teacher_api.yaml --task document
+  uv run main.py infer -p document.pdf -c config/teacher_api.yaml -t document
 
-  # Train model (--mode selects layers: vision/llm/both)
-  uv run main.py train --dataset dataset.jsonl --mode vision
+  # Resume inference from checkpoint
+  uv run main.py infer -r ./data/result.checkpoint.json
+
+  # Train model (-m selects layers: vision/llm/both)
+  uv run main.py train -d dataset.jsonl -m vision
+
+  # Resume training from checkpoint
+  uv run main.py train -r ./output/checkpoints/checkpoint-100
 
   # Evaluate model
-  uv run main.py evaluate --dataset eval.jsonl --task document --output results.json
+  uv run main.py evaluate -d eval.jsonl -t document -o results.json
 
   # Inspect model layers
-  uv run main.py inspect --pattern "vision"
+  uv run main.py inspect -p "vision"
         """,
     )
 
@@ -475,25 +481,25 @@ Examples:
         help="Convert PDF to images",
     )
     pdf2img_parser.add_argument(
-        "--source",
+        "-s", "--source",
         type=str,
         required=True,
         help="PDF file or directory containing PDFs",
     )
     pdf2img_parser.add_argument(
-        "--output",
+        "-o", "--output",
         type=str,
         default=f"./data/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
         help="Output directory for images",
     )
     pdf2img_parser.add_argument(
-        "--dpi",
+        "-d", "--dpi",
         type=int,
         default=200,
         help="Image resolution (default: 200)",
     )
     pdf2img_parser.add_argument(
-        "--format",
+        "-f", "--format",
         type=str,
         default="png",
         choices=["png", "jpg", "jpeg"],
@@ -520,49 +526,49 @@ Examples:
         help="Run inference on images or PDF using Teacher model",
     )
     infer_parser.add_argument(
-        "--images",
+        "-i", "--img",
         type=str,
         default=f"./data/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
         help="Image file or directory containing images",
     )
     infer_parser.add_argument(
-        "--pdf",
+        "-p", "--pdf",
         type=str,
         default=None,
         help="PDF file or directory containing PDFs (converts to images internally)",
     )
     infer_parser.add_argument(
-        "--dpi",
+        "-d", "--dpi",
         type=int,
         default=200,
         help="DPI for PDF to image conversion (default: 200)",
     )
     infer_parser.add_argument(
-        "--config",
+        "-c", "--config",
         type=str,
         default=None,
         help="Teacher model config YAML (e.g., config/teacher_api.yaml). "
-             "Optional if resuming with --checkpoint.",
+             "Optional if resuming with --resume.",
     )
     infer_parser.add_argument(
-        "--output",
+        "-o", "--output",
         type=str,
         default=None,
         help="Output path (auto-determined from config if not specified)",
     )
     infer_parser.add_argument(
-        "--task",
+        "-t", "--task",
         type=str,
         default="document",
         help="Task name from prompts.yaml (e.g., document, without layouts)",
     )
     infer_parser.add_argument(
-        "--list-prompts",
+        "-l", "--list-prompts",
         action="store_true",
         help="List available tasks in prompts.yaml",
     )
     infer_parser.add_argument(
-        "--checkpoint",
+        "-r", "--resume",
         type=str,
         nargs="?",
         const="auto",
@@ -576,26 +582,26 @@ Examples:
     # =============================================
     train_parser = subparsers.add_parser("train", help="Train model")
     train_parser.add_argument(
-        "--dataset",
+        "-d", "--dataset",
         type=str,
         default=None,
         help="Path to training dataset (JSONL). Optional if resuming with metadata.",
     )
     train_parser.add_argument(
-        "--eval-dataset",
+        "-e", "--eval-dataset",
         type=str,
         default=None,
         help="Path to evaluation dataset",
     )
     train_parser.add_argument(
-        "--mode",
+        "-m", "--mode",
         type=str,
         choices=["vision", "llm", "both"],
         default=None,
         help="Layer selection mode: vision (encoder), llm (decoder), both",
     )
     train_parser.add_argument(
-        "--config",
+        "-c", "--config",
         type=str,
         default="config/train_config.yaml",
         help="Training config YAML",
@@ -607,13 +613,13 @@ Examples:
         help="Path to .env file",
     )
     train_parser.add_argument(
-        "--output",
+        "-o", "--output",
         type=str,
         default=f"./models/finetuned/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
         help="Output directory for saved model",
     )
     train_parser.add_argument(
-        "--resume",
+        "-r", "--resume",
         type=str,
         default=None,
         help="Resume from checkpoint",
@@ -629,25 +635,25 @@ Examples:
     # =============================================
     eval_parser = subparsers.add_parser("evaluate", help="Evaluate model")
     eval_parser.add_argument(
-        "--dataset",
+        "-d", "--dataset",
         type=str,
         required=True,
         help="Path to evaluation dataset",
     )
     eval_parser.add_argument(
-        "--train-config",
+        "-c", "--train-config",
         type=str,
         default="config/train_config.yaml",
         help="Training config YAML (for model settings)",
     )
     eval_parser.add_argument(
-        "--task",
+        "-t", "--task",
         type=str,
         default="document",
         help="Task name from prompts.yaml (e.g., document, without layouts)",
     )
     eval_parser.add_argument(
-        "--output",
+        "-o", "--output",
         type=str,
         default=None,
         help="Output path for results JSON (CSV will also be generated)",
@@ -658,19 +664,19 @@ Examples:
     # =============================================
     inspect_parser = subparsers.add_parser("inspect", help="Inspect model layers")
     inspect_parser.add_argument(
-        "--train-config",
+        "-c", "--train-config",
         type=str,
         default="config/train_config.yaml",
         help="Training config YAML",
     )
     inspect_parser.add_argument(
-        "--pattern",
+        "-p", "--pattern",
         type=str,
         default=None,
         help="Regex pattern to filter layers",
     )
     inspect_parser.add_argument(
-        "--limit",
+        "-l", "--limit",
         type=int,
         default=100,
         help="Maximum number of layers to show",

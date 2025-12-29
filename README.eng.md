@@ -137,17 +137,17 @@ uv sync
 ### 1. pdf2img: Convert PDF to Images
 
 ```bash
-uv run main.py pdf2img --source document.pdf --output ./images --dpi 200
+uv run main.py pdf2img -s document.pdf -o ./images -d 200
 ```
 
-| Option | Description | Default |
-|:---:|:---:|:---:|
-| `--source` | PDF file or directory | (required) |
-| `--output` | Output directory | `./output_images` |
-| `--dpi` | Image resolution | `200` |
-| `--format` | Image format (png, jpg) | `png` |
-| `--start-page` | Start page number | `1` |
-| `--end-page` | End page number | (all) |
+| Option | Short | Description | Default |
+|:---:|:---:|:---:|:---:|
+| `--source` | `-s` | PDF file or directory | (required) |
+| `--output` | `-o` | Output directory | `./output_images` |
+| `--dpi` | `-d` | Image resolution | `200` |
+| `--format` | `-f` | Image format (png, jpg) | `png` |
+| `--start-page` | - | Start page number | `1` |
+| `--end-page` | - | End page number | (all) |
 
 ### 2. inference
 
@@ -155,24 +155,33 @@ Used to generate training datasets using a teacher model, or to test finetuned m
 
 ```bash
 # Direct inference from PDF (recommended)
-uv run main.py infer --pdf document.pdf --config config/api_model.yaml --task document
+uv run main.py infer -p document.pdf -c config/api_model.yaml -t document
 
 # Inference from images
-uv run main.py infer --images ./images --config config/api_model.yaml --task ocr
+uv run main.py infer -i ./images -c config/api_model.yaml -t ocr
+
+# Inference with checkpoint mode (resumable on interruption)
+uv run main.py infer -i ./images -c config/api_model.yaml -t document -r
+
+# Resume from checkpoint (auto-load arguments)
+uv run main.py infer -r ./data/result.checkpoint.json
 
 # List available tasks
-uv run main.py infer --config config/teacher_api.yaml --list-prompts
+uv run main.py infer -c config/teacher_api.yaml -l
 ```
 
-| Option | Description | Default |
-|:---:|:---:|:---:|
-| `--images` | Image file or directory | - |
-| `--pdf` | PDF file or directory | - |
-| `--dpi` | Resolution for PDF conversion | `200` |
-| `--config` | Teacher model config YAML | (required) |
-| `--task` | Task name (key in prompts.yaml) | (required) |
-| `--output` | Output path | `./output` |
-| `--list-prompts` | List available tasks | - |
+| Option | Short | Description | Default |
+|:---:|:---:|:---:|:---:|
+| `--img` | `-i` | Image file or directory | - |
+| `--pdf` | `-p` | PDF file or directory | - |
+| `--dpi` | `-d` | Resolution for PDF conversion | `200` |
+| `--config` | `-c` | Teacher model config YAML | (required) |
+| `--task` | `-t` | Task name (key in prompts.yaml) | `document` |
+| `--output` | `-o` | Output path | (auto) |
+| `--resume` | `-r` | Checkpoint mode/resume | - |
+| `--list-prompts` | `-l` | List available tasks | - |
+
+> **Checkpoint Resume**: Using `--resume` alone enables checkpoint mode. Providing a file path resumes from that checkpoint with auto-loaded arguments.
 
 <details>
 <summary><strong>View Output Format Details</strong></summary>
@@ -203,22 +212,29 @@ images/
 
 ```bash
 # Finetune Vision Encoder only (improve image feature extraction)
-uv run main.py train --dataset data.jsonl --mode vision
+uv run main.py train -d data.jsonl -m vision
 
 # Finetune LLM only (improve text generation)
-uv run main.py train --dataset data.jsonl --mode llm
+uv run main.py train -d data.jsonl -m llm
 
 # Finetune entire model
-uv run main.py train --dataset data.jsonl --mode both
+uv run main.py train -d data.jsonl -m both
+
+# Resume from checkpoint (auto-load arguments)
+uv run main.py train -r ./output/checkpoints/checkpoint-100
 ```
 
-| Option | Description | Default |
-|:---:|:---:|:---:|
-| `--dataset` | Training dataset (JSONL) | (required) |
-| `--mode` | Training layers: `vision`, `llm`, `both` | `vision` |
-| `--config` | Training config YAML | `config/train_config.yaml` |
-| `--output` | Output directory | `./models/finetuned` |
-| `--resume` | Resume from checkpoint | - |
+| Option | Short | Description | Default |
+|:---:|:---:|:---:|:---:|
+| `--dataset` | `-d` | Training dataset (JSONL) | (required) |
+| `--eval-dataset` | `-e` | Evaluation dataset | - |
+| `--mode` | `-m` | Training layers: `vision`, `llm`, `both` | `vision` |
+| `--config` | `-c` | Training config YAML | `config/train_config.yaml` |
+| `--output` | `-o` | Output directory | `./models/finetuned` |
+| `--resume` | `-r` | Resume from checkpoint | - |
+| `--save-merged` | - | Save merged model | `false` |
+
+> **Checkpoint Resume**: Specifying a checkpoint path with `--resume` auto-loads dataset, config, mode, etc. from the saved metadata.
 
 <details>
 <summary><strong>Training Mode Selection Guide</strong></summary>
@@ -236,8 +252,15 @@ uv run main.py train --dataset data.jsonl --mode both
 ### 4. Model Evaluation
 
 ```bash
-uv run main.py evaluate --dataset eval.jsonl --task document --output results.json
+uv run main.py evaluate -d eval.jsonl -t document -o results.json
 ```
+
+| Option | Short | Description | Default |
+|:---:|:---:|:---:|:---:|
+| `--dataset` | `-d` | Evaluation dataset | (required) |
+| `--train-config` | `-c` | Training config YAML | `config/train_config.yaml` |
+| `--task` | `-t` | Task name | `document` |
+| `--output` | `-o` | Output path (JSON, CSV) | - |
 
 ---
 
@@ -342,7 +365,7 @@ prompts:
 
 ```bash
 # Usage example
-uv run main.py infer --pdf invoice.pdf --config config/teacher_api.yaml --task invoice
+uv run main.py infer -p invoice.pdf -c config/teacher_api.yaml -t invoice
 ```
 
 ### `output.format`: Output Format

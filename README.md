@@ -97,17 +97,17 @@ uv sync
 ### 1. pdf2img: PDF를 이미지로 변환
 
 ```bash
-uv run main.py pdf2img --source document.pdf --output ./images --dpi 200
+uv run main.py pdf2img -s document.pdf -o ./images -d 200
 ```
 
-| 옵션 | 설명 | 기본값 |
-|:---:|:---:|:---:|
-| `--source` | PDF 파일 또는 디렉토리 | (필수) |
-| `--output` | 출력 디렉토리 | `./output_images` |
-| `--dpi` | 이미지 해상도 | `200` |
-| `--format` | 이미지 포맷 (png, jpg) | `png` |
-| `--start-page` | 시작 페이지 번호 | `1` |
-| `--end-page` | 종료 페이지 번호 | (전체) |
+| 옵션 | 단축 | 설명 | 기본값 |
+|:---:|:---:|:---:|:---:|
+| `--source` | `-s` | PDF 파일 또는 디렉토리 | (필수) |
+| `--output` | `-o` | 출력 디렉토리 | `./output_images` |
+| `--dpi` | `-d` | 이미지 해상도 | `200` |
+| `--format` | `-f` | 이미지 포맷 (png, jpg) | `png` |
+| `--start-page` | - | 시작 페이지 번호 | `1` |
+| `--end-page` | - | 종료 페이지 번호 | (전체) |
 
 ### 2. inference
 
@@ -115,24 +115,33 @@ Teacher 모델로 학습 데이터를 생성하거나, 학습된 모델의 성�
 
 ```bash
 # PDF에서 직접 추론 (권장)
-uv run main.py infer --pdf document.pdf --config config/api_model.yaml --task document
+uv run main.py infer -p document.pdf -c config/api_model.yaml -t document
 
 # 이미지에서 추론
-uv run main.py infer --images ./images --config config/api_model.yaml --task ocr
+uv run main.py infer -i ./images -c config/api_model.yaml -t ocr
+
+# 체크포인트 모드로 추론 (중단 시 재개 가능)
+uv run main.py infer -i ./images -c config/api_model.yaml -t document -r
+
+# 체크포인트에서 재개 (인자 자동 로드)
+uv run main.py infer -r ./data/result.checkpoint.json
 
 # 사용 가능한 태스크 목록 보기
-uv run main.py infer --config config/teacher_api.yaml --list-prompts
+uv run main.py infer -c config/teacher_api.yaml -l
 ```
 
-| 옵션 | 설명 | 기본값 |
-|:---:|:---:|:---:|
-| `--images` | 이미지 파일 또는 디렉토리 | - |
-| `--pdf` | PDF 파일 또는 디렉토리 | - |
-| `--dpi` | PDF 변환 시 해상도 | `200` |
-| `--config` | Teacher 모델 설정 YAML | (필수) |
-| `--task` | 태스크 이름 (prompts.yaml의 키) | (필수) |
-| `--output` | 출력 경로 | `./output` |
-| `--list-prompts` | 사용 가능한 태스크 목록 보기 | - |
+| 옵션 | 단축 | 설명 | 기본값 |
+|:---:|:---:|:---:|:---:|
+| `--img` | `-i` | 이미지 파일 또는 디렉토리 | - |
+| `--pdf` | `-p` | PDF 파일 또는 디렉토리 | - |
+| `--dpi` | `-d` | PDF 변환 시 해상도 | `200` |
+| `--config` | `-c` | Teacher 모델 설정 YAML | (필수) |
+| `--task` | `-t` | 태스크 이름 (prompts.yaml의 키) | `document` |
+| `--output` | `-o` | 출력 경로 | (자동) |
+| `--resume` | `-r` | 체크포인트 모드/재개 | - |
+| `--list-prompts` | `-l` | 사용 가능한 태스크 목록 보기 | - |
+
+> **체크포인트 재개**: `--resume`만 사용하면 체크포인트 모드 활성화, 파일 경로를 지정하면 해당 체크포인트에서 재개하며 인자들이 자동으로 로드됩니다.
 
 <details>
 <summary><strong>출력 형식 자세히 보기</strong></summary>
@@ -163,22 +172,29 @@ images/
 
 ```bash
 # Vision Encoder만 파인튜닝 (이미지 특징 추출 개선)
-uv run main.py train --dataset data.jsonl --mode vision
+uv run main.py train -d data.jsonl -m vision
 
 # LLM만 파인튜닝 (텍스트 생성 개선)
-uv run main.py train --dataset data.jsonl --mode llm
+uv run main.py train -d data.jsonl -m llm
 
 # 전체 모델 파인튜닝
-uv run main.py train --dataset data.jsonl --mode both
+uv run main.py train -d data.jsonl -m both
+
+# 체크포인트에서 재개 (인자 자동 로드)
+uv run main.py train -r ./output/checkpoints/checkpoint-100
 ```
 
-| 옵션 | 설명 | 기본값 |
-|:---:|:---:|:---:|
-| `--dataset` | 학습 데이터셋 (JSONL) | (필수) |
-| `--mode` | 학습 레이어: `vision`, `llm`, `both` | `vision` |
-| `--config` | 학습 설정 YAML | `config/train_config.yaml` |
-| `--output` | 출력 디렉토리 | `./models/finetuned` |
-| `--resume` | 체크포인트에서 재개 | - |
+| 옵션 | 단축 | 설명 | 기본값 |
+|:---:|:---:|:---:|:---:|
+| `--dataset` | `-d` | 학습 데이터셋 (JSONL) | (필수) |
+| `--eval-dataset` | `-e` | 평가 데이터셋 | - |
+| `--mode` | `-m` | 학습 레이어: `vision`, `llm`, `both` | `vision` |
+| `--config` | `-c` | 학습 설정 YAML | `config/train_config.yaml` |
+| `--output` | `-o` | 출력 디렉토리 | `./models/finetuned` |
+| `--resume` | `-r` | 체크포인트에서 재개 | - |
+| `--save-merged` | - | 병합된 모델 저장 | `false` |
+
+> **체크포인트 재개**: `--resume`으로 체크포인트 경로를 지정하면 dataset, config, mode 등이 메타데이터에서 자동으로 로드됩니다.
 
 <details>
 <summary><strong>학습 모드 선택 가이드</strong></summary>
@@ -196,8 +212,15 @@ uv run main.py train --dataset data.jsonl --mode both
 ### 4. 모델 평가
 
 ```bash
-uv run main.py evaluate --dataset eval.jsonl --task document --output results.json
+uv run main.py evaluate -d eval.jsonl -t document -o results.json
 ```
+
+| 옵션 | 단축 | 설명 | 기본값 |
+|:---:|:---:|:---:|:---:|
+| `--dataset` | `-d` | 평가 데이터셋 | (필수) |
+| `--train-config` | `-c` | 학습 설정 YAML | `config/train_config.yaml` |
+| `--task` | `-t` | 태스크 이름 | `document` |
+| `--output` | `-o` | 결과 출력 경로 (JSON, CSV) | - |
 
 ---
 
@@ -302,7 +325,7 @@ prompts:
 
 ```bash
 # 사용 예시
-uv run main.py infer --pdf invoice.pdf --config config/teacher_api.yaml --task invoice
+uv run main.py infer -p invoice.pdf -c config/teacher_api.yaml -t invoice
 ```
 
 ### `output.format`: 출력 형식
