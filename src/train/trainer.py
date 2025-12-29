@@ -432,8 +432,41 @@ class VLMTrainer:
             self.model.save_pretrained(str(output_path))
             self.tokenizer.save_pretrained(str(output_path))
 
+        # 학습 설정 저장
+        self._save_train_config(output_path)
+
         logger.success(f"Model saved to {output_path}")
         return output_path
+
+    def _save_train_config(self, output_path: Path):
+        """학습에 사용된 설정을 저장합니다."""
+        config_path = output_path / "train_config.yaml"
+
+        # 현재 학습 설정 구성
+        train_config = {
+            "model": {
+                "base_model_path": self.base_model_path,
+                "load_in_4bit": self.load_in_4bit,
+                "use_gradient_checkpointing": self.use_gradient_checkpointing,
+            },
+            "lora": {
+                "r": self.lora_r,
+                "lora_alpha": self.lora_alpha,
+                "lora_dropout": self.lora_dropout,
+            },
+            "training": self.train_config,
+            "image": {
+                "image_size": self.image_size,
+                "base_size": self.base_size,
+                "crop_mode": self.crop_mode,
+            },
+            "training_mode": self.training_mode,
+        }
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.dump(train_config, f, default_flow_style=False, allow_unicode=True)
+
+        logger.debug(f"Training config saved to {config_path}")
 
     def inference(
         self,
