@@ -1,10 +1,10 @@
-# DeepSeek-OCR 파인튜닝 툴킷
+# DeepSeek-OCR Finetuning Toolkit
 
 <div align="center">
 
 ![OCR Finetune](https://via.placeholder.com/150x150?text=OCR+Finetune)
 
-**문서 이미지를 마크다운으로, 더 정확하게**<br/>
+**Finetune DeepSeek-OCR easily**<br/>
 DeepSeek-OCR 모델을 위한 프로페셔널 파인튜닝 및 추론 도구
 
 [![Python](https://img.shields.io/badge/Python-3.12%2B-blue?style=flat-square&logo=python)](https://www.python.org/)
@@ -21,61 +21,20 @@ DeepSeek-OCR 모델을 위한 프로페셔널 파인튜닝 및 추론 도구
 
 ## Introduction
 
-**DeepSeek-OCR 파인튜닝 툴킷**은 unsloth의 DeepSeek-OCR 파인튜닝 가이드를 참고하여,
-**Pseudo Labeling** 방식으로 DeepSeek-OCR 모델을 파인튜닝합니다. 외부 Teacher 모델로부터 생성한 라벨 데이터를 기반으로 DeepSeek-OCR 모델을 학습시키기 편리하게 만든 도구입니다.
+DeepSeek-OCR 파인튜닝 툴킷은 Unsloth의 가이드를 기반으로 설계되었습니다. 외부 Teacher 모델을 활용한 Pseudo Labeling부터 학습 데이터 생성, 모델 파인튜닝까지의 전 과정을 효율적으로 수행할 수 있도록 지원합니다.
 
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                             Pseudo Labeling Pipeline                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────┐     pdf2img      ┌─────────────────┐                       │
-│  │             │ ───────────────► │                 │                       │
-│  │  PDF 문서   │                  │  이미지 데이터셋  │──┐                    │
-│  │             │                  │  (images/*.png) │  │                    │
-│  └─────────────┘                  └─────────────────┘  │                    │
-│                                            │           │                    │
-│                                            ▼           │                    │
-│                                   ┌─────────────────┐  │                    │
-│                                   │  Teacher Model  │  │                    │
-│                                   │  (외부 API/vLLM) │  │                    │
-│                                   │                 │  │                    │
-│                                   │  infer --task   │  │                    │
-│                                   └────────┬────────┘  │                    │
-│                                            │           │                    │
-│                                            ▼           │                    │
-│                                   ┌─────────────────┐  │                    │
-│                                   │   라벨 데이터    │  │                    │
-│                                   │ (Markdown 텍스트)│  │                    │
-│                                   └────────┬────────┘  │                    │
-│                                            │           │                    │
-│                                            ▼           ▼                    │
-│                                   ┌─────────────────────────┐               │
-│                                   │     학습 데이터셋         │               │
-│                                   │     (data.jsonl)        │               │
-│                                   │  ┌───────┬───────────┐  │               │
-│                                   │  │ image │   label   │  │               │
-│                                   │  ├───────┼───────────┤  │               │
-│                                   │  │ .png  │ markdown  │  │               │
-│                                   │  └───────┴───────────┘  │               │
-│                                   └────────────┬────────────┘               │
-│                                                │                            │
-│                                                ▼                            │
-│                                   ┌─────────────────────────┐               │
-│                                   │    Student Model        │               │
-│                                   │    (DeepSeek-OCR)       │               │
-│                                   │                         │               │
-│                                   │  train --mode vision    │               │
-│                                   └────────────┬────────────┘               │
-│                                                │                            │
-│                                                ▼                            │
-│                                   ┌─────────────────────────┐               │
-│                                   │   Fine-tuned Model      │               │
-│                                   │   (LoRA Adapter)        │               │
-│                                   └─────────────────────────┘               │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+### 파이프라인 워크플로우
+
+```mermaid
+graph TD
+    A[PDF] --> B[Images]
+    B --> C{Teacher Model}
+    C --> D[Labels]
+    B --> E[Dataset]
+    D --> E
+    E --> F[DeepSeek-OCR]
+    F --> G[Fine-tuned Model]
 ```
 
 **단계별 요약:**
@@ -152,7 +111,7 @@ uv run main.py pdf2img --source document.pdf --output ./images --dpi 200
 
 ### 2. inference
 
-teacher 모델을 이용하여 학습 데이터셋을 생성하거나ㅣ, 추후 파인튜닝된 모델을 테스트할 때 이용됩니다.
+Teacher 모델로 학습 데이터를 생성하거나, 학습된 모델의 성능을 테스트합니다.
 
 ```bash
 # PDF에서 직접 추론 (권장)
@@ -496,38 +455,6 @@ output:
 
 ---
 
-## 프로젝트 구조
-
-```
-ocr_finetune/
-├── main.py                 # CLI 진입점
-├── config/
-│   ├── examples/           # 설정 파일 예제
-│   │   ├── train_config.example.yaml
-│   │   ├── teacher_api.example.yaml
-│   │   ├── teacher_local.example.yaml
-│   │   └── prompts.example.yaml
-│   ├── train_config.yaml   # 학습 설정
-│   ├── teacher_api.yaml    # API 추론 설정
-│   └── prompts.yaml        # 프롬프트 정의
-├── src/
-│   ├── data/
-│   │   ├── infer.py        # 추론 모듈
-│   │   ├── pdf2img.py      # PDF → 이미지 변환
-│   │   ├── collator.py     # 데이터 콜레이터
-│   │   └── preprocessor.py # 출력 전처리
-│   ├── train/
-│   │   ├── trainer.py      # 학습 로직
-│   │   └── layers.py       # 레이어 선택
-│   └── eval/
-│       └── metrics.py      # 평가 메트릭
-├── models/
-│   └── deepseek_ocr/       # 기본 모델 (자동 다운로드)
-└── data/                   # 데이터셋 디렉토리
-```
-
----
-
 ## 자동 모델 다운로드
 
 `train`, `evaluate`, `inspect`, `infer` 명령 실행 시 `models/deepseek_ocr` 폴더가 없으면 Hugging Face에서 자동으로 다운로드됩니다.
@@ -586,20 +513,6 @@ curl http://localhost:8000/v1/models
 ```
 
 </details>
-
----
-
-## 기술 스택
-
-| 카테고리 | 기술 |
-|:---:|:---:|
-| **언어** | Python 3.12+ |
-| **패키지 관리** | uv |
-| **기본 모델** | DeepSeek-OCR (Unsloth) |
-| **파인튜닝** | LoRA, PEFT |
-| **최적화** | Unsloth, 4bit Quantization |
-| **추론** | OpenAI API, Transformers |
-| **문서 처리** | PyMuPDF |
 
 ---
 
