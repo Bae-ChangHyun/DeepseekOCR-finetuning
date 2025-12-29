@@ -70,6 +70,7 @@ class VLMTrainer:
         )
         self.output_dir = self._default_output_dir
         self.checkpoint_dir = str(Path(self.output_dir) / "checkpoints")
+        self.save_merged = output_config.get("save_merged_16bit", False)
 
         self.model = None
         self.tokenizer = None

@@ -1,0 +1,70 @@
+# ===========================================
+# Training Configuration Example
+# ===========================================
+# Copy this file to config/train_config.yaml and modify as needed
+
+# Model Settings
+model:
+  base_model_path: "models/deepseek_ocr"  # Local path or HuggingFace repo
+  load_in_4bit: false
+  use_gradient_checkpointing: "unsloth"
+
+# LoRA Configuration
+lora:
+  r: 16
+  lora_alpha: 16
+  lora_dropout: 0
+  bias: "none"
+  use_rslora: false
+
+  # Target modules based on training mode (--mode vision/llm/both)
+  # DeepSeek-OCR: PEFT matches modules ending with these names
+  vision_target_modules:
+    - "qkv_proj"
+    - "out_proj"
+    - "fc1"
+    - "fc2"
+
+  llm_target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+
+# Training Hyperparameters
+training:
+  per_device_train_batch_size: 2
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4
+  weight_decay: 0.001
+  warmup_steps: 5
+  max_steps: 100  # Set to -1 and use num_train_epochs for full training
+  num_train_epochs: 1
+  lr_scheduler_type: "linear"
+  logging_steps: 1
+  save_steps: 50
+  eval_steps: 50
+  optim: "adamw_8bit"
+  seed: 3407
+  dataloader_num_workers: 2
+
+# Image Processing
+image:
+  # Preset sizes:
+  # Tiny: base_size=512, image_size=512, crop_mode=false
+  # Small: base_size=640, image_size=640, crop_mode=false
+  # Base: base_size=1024, image_size=1024, crop_mode=false
+  # Large: base_size=1280, image_size=1280, crop_mode=false
+  # Gundam (recommended): base_size=1024, image_size=640, crop_mode=true
+  image_size: 640
+  base_size: 1024
+  crop_mode: true
+
+# Output Settings
+output:
+  output_dir: "./models/finetuned"
+  save_lora_only: true
+  save_merged_16bit: false

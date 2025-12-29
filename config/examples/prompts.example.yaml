@@ -1,0 +1,18 @@
+# ===========================================
+# Prompts Configuration
+# ===========================================
+# Student model instructions for each task
+# Copy to config/prompts.yaml and modify as needed
+
+prompts:
+  # OCR task - simple text extraction
+  ocr:
+    instruction: "<image>\nOCR. "
+
+  # Document task - structured document parsing
+  document:
+    instruction: "<image>\nConvert this document to Markdown. "
+
+  # Free OCR - detailed extraction
+  free_ocr:
+    instruction: "<image>\nFree OCR. "

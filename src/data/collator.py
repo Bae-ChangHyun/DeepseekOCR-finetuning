@@ -15,7 +15,7 @@ from loguru import logger
 from PIL import Image, ImageOps
 from torch.nn.utils.rnn import pad_sequence
 
-from deepseek_ocr.modeling_deepseekocr import (
+from models.deepseek_ocr.modeling_deepseekocr import (
     BasicImageTransform,
     dynamic_preprocess,
     format_messages,

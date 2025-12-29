@@ -1,5 +1,5 @@
-deepseek_ocr/
-dataset/
+models/
+data/
 dataset.json
 *.pdf
 outputs/

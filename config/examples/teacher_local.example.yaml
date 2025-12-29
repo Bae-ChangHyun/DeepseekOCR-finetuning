@@ -1,0 +1,25 @@
+# ===========================================
+# Teacher Model Configuration (Local Model)
+# ===========================================
+# Use this for inference with local DeepSeek-OCR model
+# Copy to config/teacher_local.yaml and modify as needed
+
+type: "local"
+model_type: "deepseek-ocr"  # Preprocessor type: deepseek-ocr, deepseek-document, default
+
+# Local Model Settings
+local:
+  model_path: "models/deepseek_ocr"  # Path to local model
+  load_in_4bit: false
+  trust_remote_code: true
+
+# Image Processing
+image:
+  image_size: 640
+  base_size: 1024
+  crop_mode: true
+
+# Output Settings
+output:
+  format: "md"  # jsonl, json, md (md: save as markdown files)
+  save_images: false

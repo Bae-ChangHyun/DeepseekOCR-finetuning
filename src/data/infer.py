@@ -17,6 +17,8 @@ import yaml
 from loguru import logger
 from PIL import Image
 from tqdm import tqdm
+from unsloth import FastVisionModel
+from transformers import AutoModel
 
 
 # 페이지 패턴: {name}_p{page}
@@ -332,12 +334,7 @@ class LocalInferencer(BaseInferencer):
         if self.model is not None:
             return
 
-        try:
-            from unsloth import FastVisionModel
-        except ImportError as e:
-            raise ImportError("unsloth is required. Install it with: pip install unsloth") from e
-
-        from transformers import AutoModel
+        
         import os
         os.environ["UNSLOTH_WARN_UNINITIALIZED"] = "0"
 
