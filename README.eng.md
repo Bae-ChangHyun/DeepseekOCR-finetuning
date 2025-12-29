@@ -216,6 +216,117 @@ uv run main.py evaluate --dataset eval.jsonl --task document --output results.js
 
 ---
 
+## Configuration Guide
+
+This section explains the key options in inference configuration files.
+
+### `type`: Inference Mode
+
+| Value | Description | When to Use |
+|:---:|:---|:---|
+| `api` | Use OpenAI-compatible API server | When running vLLM, TGI, or external servers |
+| `local` | Direct inference on local GPU | Single machine, no API server needed |
+
+```yaml
+# API mode - Call external server
+type: "api"
+api:
+  base_url: "http://localhost:8000/v1"
+  model_name: "deepseek-ocr"
+  api_key: "your-api-key"
+
+# Local mode - Use local GPU
+type: "local"
+local:
+  model_path: "models/deepseek_ocr"
+  load_in_4bit: false
+```
+
+### `model_type`: Output Postprocessing
+
+Selects the preprocessor that removes special tags from model output.
+
+| Value | Description | Tags Removed |
+|:---:|:---|:---|
+| `default` | No postprocessing | None (raw output) |
+| `deepseek-ocr` | For OCR tasks | `<\|...\|>` special tags |
+| `deepseek-document` | For document parsing | `<\|ref\|>`, `<\|det\|>`, coordinates, etc. |
+
+```yaml
+# For document parsing (removes coordinate tags)
+model_type: "deepseek-document"
+
+# For simple OCR
+model_type: "deepseek-ocr"
+
+# No postprocessing, raw output
+model_type: "default"
+```
+
+<details>
+<summary><strong>DeepSeek Output Example (Before/After Preprocessing)</strong></summary>
+
+**Before preprocessing** (`deepseek-document` raw output):
+```
+<|ref|>text<|/ref|><|det|>[[238, 260, 480, 275]]<|/det|>
+'Real-time Public Transit Congestion Prediction Service' Development
+
+<|ref|>sub_title<|/ref|><|det|>[[47, 315, 152, 333]]<|/det|>
+## Cover Letter
+```
+
+**After preprocessing** (`model_type: "deepseek-document"`):
+```
+'Real-time Public Transit Congestion Prediction Service' Development
+
+## Cover Letter
+```
+
+</details>
+
+### `--task`: Prompt Selection
+
+Selects a key defined in the `prompts` section. Each task has `system` and `user` prompts.
+
+```yaml
+# config/teacher_api.yaml
+prompts:
+  ocr:                    # --task ocr
+    system: "You are an OCR assistant..."
+    user: "Extract all text from this image."
+
+  document:               # --task document
+    system: "You are a document parsing assistant..."
+    user: "Convert this document to Markdown format."
+
+  invoice:                # --task invoice (custom task)
+    system: "You are an invoice parser..."
+    user: "Extract invoice details as JSON."
+```
+
+```bash
+# Usage example
+uv run main.py infer --pdf invoice.pdf --config config/teacher_api.yaml --task invoice
+```
+
+### `output.format`: Output Format
+
+| Value | Description | File Format |
+|:---:|:---|:---|
+| `jsonl` | Training dataset | One JSON per line |
+| `json` | JSON array | All results in a single JSON array |
+| `md` | Markdown files | Separate `.md` file per document |
+
+```yaml
+output:
+  format: "md"        # Save as markdown files
+  save_images: false  # Whether to save images alongside
+```
+
+**Auto-merge for Markdown output**: Images with `{name}_p{page}.png` pattern are automatically merged into `{name}.md`.
+
+---
+
 ## Configuration Files
 
 Configuration examples are available in the `config/examples/` directory.

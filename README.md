@@ -216,6 +216,117 @@ uv run main.py evaluate --dataset eval.jsonl --task document --output results.js
 
 ---
 
+## 설정 가이드
+
+추론 설정 파일의 핵심 옵션들을 설명합니다.
+
+### `type`: 추론 방식 선택
+
+| 값 | 설명 | 사용 시점 |
+|:---:|:---|:---|
+| `api` | OpenAI 호환 API 서버 사용 | vLLM, TGI 등 외부 서버 운영 시 |
+| `local` | 로컬 GPU에서 직접 추론 | 단일 머신, API 서버 없이 사용 시 |
+
+```yaml
+# API 모드 - 외부 서버 호출
+type: "api"
+api:
+  base_url: "http://localhost:8000/v1"
+  model_name: "deepseek-ocr"
+  api_key: "your-api-key"
+
+# Local 모드 - 로컬 GPU 사용
+type: "local"
+local:
+  model_path: "models/deepseek_ocr"
+  load_in_4bit: false
+```
+
+### `model_type`: 출력 후처리 방식
+
+모델 출력에서 특수 태그를 제거하는 전처리기를 선택합니다.
+
+| 값 | 설명 | 제거하는 태그 |
+|:---:|:---|:---|
+| `default` | 후처리 없음 | 없음 (원본 그대로) |
+| `deepseek-ocr` | OCR 태스크용 | `<\|...\|>` 특수 태그 |
+| `deepseek-document` | 문서 파싱용 | `<\|ref\|>`, `<\|det\|>`, 좌표 정보 등 |
+
+```yaml
+# 문서 파싱 시 (좌표 태그 제거)
+model_type: "deepseek-document"
+
+# 단순 OCR 시
+model_type: "deepseek-ocr"
+
+# 후처리 없이 원본 출력
+model_type: "default"
+```
+
+<details>
+<summary><strong>DeepSeek 출력 예시 (전처리 전/후)</strong></summary>
+
+**전처리 전** (`deepseek-document` 원본 출력):
+```
+<|ref|>text<|/ref|><|det|>[[238, 260, 480, 275]]<|/det|>
+'실시간 대중교통 혼잡도 예측 서비스' 개발
+
+<|ref|>sub_title<|/ref|><|det|>[[47, 315, 152, 333]]<|/det|>
+## 자기소개서
+```
+
+**전처리 후** (`model_type: "deepseek-document"`):
+```
+'실시간 대중교통 혼잡도 예측 서비스' 개발
+
+## 자기소개서
+```
+
+</details>
+
+### `--task`: 프롬프트 선택
+
+`prompts` 섹션에 정의된 키를 선택합니다. 각 태스크는 `system`과 `user` 프롬프트를 가집니다.
+
+```yaml
+# config/teacher_api.yaml
+prompts:
+  ocr:                    # --task ocr
+    system: "You are an OCR assistant..."
+    user: "Extract all text from this image."
+
+  document:               # --task document
+    system: "You are a document parsing assistant..."
+    user: "Convert this document to Markdown format."
+
+  invoice:                # --task invoice (커스텀 태스크)
+    system: "You are an invoice parser..."
+    user: "Extract invoice details as JSON."
+```
+
+```bash
+# 사용 예시
+uv run main.py infer --pdf invoice.pdf --config config/teacher_api.yaml --task invoice
+```
+
+### `output.format`: 출력 형식
+
+| 값 | 설명 | 파일 형태 |
+|:---:|:---|:---|
+| `jsonl` | 학습용 데이터셋 | 한 줄에 하나의 JSON |
+| `json` | JSON 배열 | 전체를 하나의 JSON 배열로 |
+| `md` | 마크다운 파일 | 문서별로 `.md` 파일 생성 |
+
+```yaml
+output:
+  format: "md"        # 마크다운 파일로 저장
+  save_images: false  # 이미지 함께 저장 여부
+```
+
+**마크다운 출력 시 자동 병합**: `{name}_p{page}.png` 패턴의 이미지는 `{name}.md`로 자동 병합됩니다.
+
+---
+
 ## 설정 파일
 
 설정 예제는 `config/examples/` 디렉토리에서 확인할 수 있습니다.
