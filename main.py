@@ -12,6 +12,32 @@ from pathlib import Path
 
 from loguru import logger
 
+# 기본 모델 경로 상수
+DEFAULT_MODEL_DIR = Path("models/deepseek_ocr")
+DEFAULT_MODEL_REPO = "unsloth/DeepSeek-OCR"
+
+
+def ensure_model_exists():
+    """모델 디렉토리가 없으면 Hugging Face에서 다운로드"""
+    if DEFAULT_MODEL_DIR.exists():
+        logger.debug(f"Model found at {DEFAULT_MODEL_DIR}")
+        return
+
+    logger.info(f"Model not found at {DEFAULT_MODEL_DIR}")
+    logger.info(f"Downloading {DEFAULT_MODEL_REPO} from Hugging Face...")
+
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(
+            DEFAULT_MODEL_REPO,
+            local_dir=str(DEFAULT_MODEL_DIR),
+        )
+        logger.success(f"Model downloaded to {DEFAULT_MODEL_DIR}")
+    except Exception as e:
+        logger.error(f"Failed to download model: {e}")
+        raise
+
 
 def cmd_pdf2img(args):
     """PDF를 이미지로 변환"""
@@ -35,6 +61,8 @@ def cmd_pdf2img(args):
 
 def cmd_infer(args):
     """이미지에서 Teacher 모델로 추론하여 데이터셋 생성"""
+    import tempfile
+
     import yaml
 
     from src.data.infer import list_available_prompts, run_inference, run_inference_markdown
@@ -57,11 +85,31 @@ def cmd_infer(args):
     output = args.output
     if output is None:
         if is_markdown:
-            output = f"./dataset/markdown/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}"
+            output = f"./data/markdown/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}"
         else:
-            output = f"./dataset/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
+            output = f"./data/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
 
-    logger.info(f"Image source: {args.images}")
+    # PDF 입력 처리: PDF → 이미지 변환 후 추론
+    if args.pdf:
+        from src.data.pdf2img import pdf2img
+
+        # 임시 디렉토리에 이미지 변환
+        temp_dir = tempfile.mkdtemp(prefix="ocr_infer_")
+        logger.info(f"PDF source: {args.pdf}")
+        logger.info(f"Converting PDF to images in: {temp_dir}")
+
+        image_paths = pdf2img(
+            source=args.pdf,
+            output_dir=temp_dir,
+            dpi=args.dpi,
+            image_format="png",
+        )
+        logger.info(f"Converted {len(image_paths)} pages")
+        image_source = temp_dir
+    else:
+        image_source = args.images
+
+    logger.info(f"Image source: {image_source}")
     logger.info(f"Config: {args.config}")
     logger.info(f"Task: {args.task}")
     logger.info(f"Output: {output}")
@@ -70,7 +118,7 @@ def cmd_infer(args):
     if is_markdown:
         # 마크다운 파일로 저장 (같은 PDF 페이지는 자동 병합)
         output_dir = run_inference_markdown(
-            image_source=args.images,
+            image_source=image_source,
             output_dir=output,
             config_path=args.config,
             task=args.task,
@@ -79,7 +127,7 @@ def cmd_infer(args):
     else:
         # 데이터셋 형식으로 저장
         output_path = run_inference(
-            image_source=args.images,
+            image_source=image_source,
             output_path=output,
             config_path=args.config,
             task=args.task,
@@ -119,10 +167,11 @@ def cmd_train(args):
         resume_from_checkpoint=args.resume,
     )
 
-    # 모델 저장
+    # 모델 저장 (CLI --save-merged가 있으면 덮어쓰기, 없으면 config 사용)
+    save_merged = args.save_merged or trainer.save_merged
     trainer.save_model(
         output_path=trainer.output_dir,
-        save_merged=args.save_merged,
+        save_merged=save_merged,
     )
 
 
@@ -217,16 +266,19 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Step 1: Convert PDF to images
+  # Convert PDF to images (optional, can use --pdf directly in infer)
   uv run main.py pdf2img --source document.pdf
 
-  # Step 2: List available tasks
+  # List available tasks
   uv run main.py infer --config config/teacher_api.yaml --list-prompts
 
-  # Step 2: Run inference (output format determined by config: jsonl/json/md)
+  # Run inference from images
   uv run main.py infer --images ./images --config config/teacher_api.yaml --task document
 
-  # Step 3: Train model (--mode selects layers: vision/llm/both)
+  # Run inference directly from PDF (converts internally)
+  uv run main.py infer --pdf document.pdf --config config/teacher_api.yaml --task document
+
+  # Train model (--mode selects layers: vision/llm/both)
   uv run main.py train --dataset dataset.jsonl --mode vision
 
   # Evaluate model
@@ -255,7 +307,7 @@ Examples:
     pdf2img_parser.add_argument(
         "--output",
         type=str,
-        default=f"./dataset/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
+        default=f"./data/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
         help="Output directory for images",
     )
     pdf2img_parser.add_argument(
@@ -289,13 +341,25 @@ Examples:
     # =============================================
     infer_parser = subparsers.add_parser(
         "infer",
-        help="Run inference on images using Teacher model",
+        help="Run inference on images or PDF using Teacher model",
     )
     infer_parser.add_argument(
         "--images",
         type=str,
-        default=f"./dataset/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
+        default=f"./data/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
         help="Image file or directory containing images",
+    )
+    infer_parser.add_argument(
+        "--pdf",
+        type=str,
+        default=None,
+        help="PDF file or directory containing PDFs (converts to images internally)",
+    )
+    infer_parser.add_argument(
+        "--dpi",
+        type=int,
+        default=200,
+        help="DPI for PDF to image conversion (default: 200)",
     )
     infer_parser.add_argument(
         "--config",
@@ -359,7 +423,7 @@ Examples:
     train_parser.add_argument(
         "--output",
         type=str,
-        default=f"./results/model/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
+        default=f"./models/finetuned/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}",
         help="Output directory for saved model",
     )
     train_parser.add_argument(
@@ -431,6 +495,10 @@ Examples:
     if args.command is None:
         parser.print_help()
         sys.exit(1)
+
+    # 모델 체크 (train, evaluate, inspect 명령에서 필요)
+    if args.command in ("train", "evaluate", "inspect"):
+        ensure_model_exists()
 
     # 명령 실행
     commands = {
