@@ -6,6 +6,7 @@ VLM 파인튜닝을 위한 학습 로직
 
 import json
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -14,6 +15,9 @@ import yaml
 from dotenv import load_dotenv
 from loguru import logger
 from transformers import AutoModel, Trainer, TrainingArguments
+
+# 학습 메타데이터 파일명
+TRAINING_META_FILE = "training_meta.json"
 
 from src.data.collator import DeepSeekOCRDataCollator
 from src.train.layers import get_target_modules, print_trainable_params
@@ -185,11 +189,121 @@ class VLMTrainer:
         logger.info(f"Loaded {len(data)} samples from {dataset_path}")
         return data
 
+    def save_training_meta(
+        self,
+        dataset_path: str | Path,
+        eval_dataset_path: str | Path | None = None,
+        mode: str | None = None,
+    ):
+        """학습 메타데이터를 저장합니다."""
+        meta_path = Path(self.output_dir) / TRAINING_META_FILE
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+
+        meta = {
+            "dataset": str(Path(dataset_path).resolve()),
+            "eval_dataset": str(Path(eval_dataset_path).resolve()) if eval_dataset_path else None,
+            "config_path": str(Path(self._config_path).resolve()) if self._config_path else None,
+            "mode": mode or self.training_mode,
+            "output_dir": str(Path(self.output_dir).resolve()),
+            "checkpoint_dir": str(Path(self.checkpoint_dir).resolve()),
+            "base_model_path": self.base_model_path,
+            "created_at": datetime.now().isoformat(),
+        }
+
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2, ensure_ascii=False)
+
+        logger.debug(f"Training metadata saved to {meta_path}")
+        return meta_path
+
+    @staticmethod
+    def load_training_meta(checkpoint_path: str | Path) -> dict | None:
+        """
+        체크포인트에서 학습 메타데이터를 로드합니다.
+
+        Args:
+            checkpoint_path: 체크포인트 디렉토리 경로 (예: ./output/checkpoints/checkpoint-100)
+
+        Returns:
+            메타데이터 딕셔너리 또는 None
+        """
+        checkpoint_path = Path(checkpoint_path)
+
+        # checkpoint_path가 checkpoint-XXX 형태면 상위 디렉토리에서 메타데이터 찾기
+        # ./output/checkpoints/checkpoint-100 -> ./output/training_meta.json
+        if checkpoint_path.name.startswith("checkpoint-"):
+            meta_path = checkpoint_path.parent.parent / TRAINING_META_FILE
+        else:
+            # ./output/checkpoints -> ./output/training_meta.json
+            meta_path = checkpoint_path.parent / TRAINING_META_FILE
+
+        if not meta_path.exists():
+            # 직접 경로도 시도
+            alt_meta_path = checkpoint_path / TRAINING_META_FILE
+            if alt_meta_path.exists():
+                meta_path = alt_meta_path
+            else:
+                return None
+
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load training metadata: {e}")
+            return None
+
+    @staticmethod
+    def validate_training_meta(
+        meta: dict,
+        dataset_path: str | Path | None = None,
+        config_path: str | Path | None = None,
+        mode: str | None = None,
+    ) -> tuple[bool, list[str]]:
+        """
+        학습 메타데이터와 현재 설정을 비교 검증합니다.
+
+        Returns:
+            (is_valid, warnings): 검증 결과와 경고 메시지 리스트
+        """
+        warnings = []
+
+        if dataset_path:
+            saved_dataset = meta.get("dataset", "")
+            current_dataset = str(Path(dataset_path).resolve())
+            if saved_dataset != current_dataset:
+                warnings.append(
+                    f"Dataset mismatch:\n"
+                    f"  - Saved: {saved_dataset}\n"
+                    f"  - Current: {current_dataset}"
+                )
+
+        if config_path:
+            saved_config = meta.get("config_path", "")
+            current_config = str(Path(config_path).resolve())
+            if saved_config != current_config:
+                warnings.append(
+                    f"Config mismatch:\n"
+                    f"  - Saved: {saved_config}\n"
+                    f"  - Current: {current_config}"
+                )
+
+        if mode:
+            saved_mode = meta.get("mode", "")
+            if saved_mode != mode:
+                warnings.append(
+                    f"Mode mismatch:\n"
+                    f"  - Saved: {saved_mode}\n"
+                    f"  - Current: {mode}"
+                )
+
+        return len(warnings) == 0, warnings
+
     def train(
         self,
         dataset: list[dict] | str | Path,
         eval_dataset: list[dict] | str | Path | None = None,
         resume_from_checkpoint: str | None = None,
+        mode: str | None = None,
     ):
         """학습을 시작합니다."""
         if self.model is None or self.tokenizer is None:
@@ -202,11 +316,23 @@ class VLMTrainer:
                 "unsloth is required. Install it with: pip install unsloth"
             ) from e
 
+        # 원본 경로 저장 (메타데이터용)
+        dataset_path = dataset if isinstance(dataset, (str, Path)) else None
+        eval_dataset_path = eval_dataset if isinstance(eval_dataset, (str, Path)) else None
+
         # 데이터셋 준비
         if isinstance(dataset, (str, Path)):
             dataset = self.prepare_dataset(dataset)
         if isinstance(eval_dataset, (str, Path)):
             eval_dataset = self.prepare_dataset(eval_dataset)
+
+        # 학습 메타데이터 저장 (resume이 아닐 때만)
+        if not resume_from_checkpoint and dataset_path:
+            self.save_training_meta(
+                dataset_path=dataset_path,
+                eval_dataset_path=eval_dataset_path,
+                mode=mode or self.training_mode,
+            )
 
         # 학습 모드 활성화
         FastVisionModel.for_training(self.model)

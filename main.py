@@ -91,7 +91,12 @@ def cmd_infer(args):
 
     import yaml
 
-    from src.data.infer import list_available_prompts, run_inference, run_inference_markdown
+    from src.data.infer import (
+        DatasetInferencer,
+        list_available_prompts,
+        run_inference,
+        run_inference_markdown,
+    )
 
     # prompt key 목록 보기
     if args.list_prompts:
@@ -101,19 +106,77 @@ def cmd_infer(args):
             logger.info(f"  - {key}")
         return
 
+    # 체크포인트 재개 모드 처리
+    config_path = args.config
+    task = args.task
+    images = args.images
+    output = args.output
+    checkpoint_path = None
+
+    if args.checkpoint:
+        # --checkpoint가 파일 경로로 제공된 경우
+        if args.checkpoint != "auto" and Path(args.checkpoint).exists():
+            checkpoint_path = Path(args.checkpoint)
+            checkpoint_data = DatasetInferencer.load_inference_checkpoint(checkpoint_path)
+
+            if checkpoint_data:
+                meta = checkpoint_data.get("meta", {})
+                logger.info("Found inference checkpoint metadata")
+
+                # 인자가 없으면 메타데이터에서 자동 로드
+                if not args.config:
+                    config_path = meta.get("config_path")
+                    logger.info(f"Auto-loaded config from checkpoint: {config_path}")
+
+                if args.task == "document" and meta.get("task"):  # 기본값이면 덮어쓰기
+                    task = meta.get("task")
+                    logger.info(f"Auto-loaded task from checkpoint: {task}")
+
+                if meta.get("image_source"):
+                    images = meta.get("image_source")
+                    logger.info(f"Auto-loaded image_source from checkpoint: {images}")
+
+                if not args.output and meta.get("output_path"):
+                    output = meta.get("output_path")
+                    logger.info(f"Auto-loaded output from checkpoint: {output}")
+
+                # 인자가 제공된 경우 검증
+                is_valid, warnings = DatasetInferencer.validate_inference_checkpoint(
+                    checkpoint_data,
+                    image_source=args.images if args.images != f"./data/img/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}" else None,
+                    config_path=args.config if args.config else None,
+                    task=args.task if args.task != "document" else None,
+                )
+
+                if not is_valid:
+                    logger.warning("Inference configuration mismatch detected:")
+                    for warning in warnings:
+                        logger.warning(warning)
+                    logger.warning("Proceeding with current arguments (not checkpoint metadata)")
+            else:
+                logger.warning(f"Could not load checkpoint metadata from {checkpoint_path}")
+
+    # config 필수 체크
+    if not config_path:
+        logger.error("Config is required. Use --config or resume from a checkpoint with metadata.")
+        sys.exit(1)
+
     # config에서 output format 읽기
-    with open(args.config) as f:
+    with open(config_path) as f:
         config = yaml.safe_load(f)
     output_format = config.get("output", {}).get("format", "jsonl")
     is_markdown = output_format == "md"
 
     # output 경로 결정
-    output = args.output
     if output is None:
         if is_markdown:
             output = f"./data/markdown/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}"
         else:
             output = f"./data/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
+
+    # checkpoint 경로 결정 (--checkpoint만 사용된 경우)
+    if args.checkpoint == "auto":
+        checkpoint_path = Path(output).with_suffix(".checkpoint.json")
 
     # PDF 입력 처리: PDF → 이미지 변환 후 추론
     temp_dir_context = None
@@ -136,30 +199,41 @@ def cmd_infer(args):
             logger.info(f"Converted {len(image_paths)} pages")
             image_source = temp_dir
         else:
-            image_source = args.images
+            image_source = images
 
         logger.info(f"Image source: {image_source}")
-        logger.info(f"Config: {args.config}")
-        logger.info(f"Task: {args.task}")
+        logger.info(f"Config: {config_path}")
+        logger.info(f"Task: {task}")
         logger.info(f"Output: {output}")
         logger.info(f"Format: {'markdown' if is_markdown else output_format}")
+        if args.checkpoint:
+            logger.info(f"Checkpoint mode: enabled")
 
         if is_markdown:
             # 마크다운 파일로 저장 (같은 PDF 페이지는 자동 병합)
             output_dir = run_inference_markdown(
                 image_source=image_source,
                 output_dir=output,
-                config_path=args.config,
-                task=args.task,
+                config_path=config_path,
+                task=task,
             )
             logger.success(f"Markdown files saved to: {output_dir}")
+        elif args.checkpoint:
+            # 체크포인트 모드로 데이터셋 저장
+            inferencer = DatasetInferencer(config_path, task)
+            output_path = inferencer.run_with_checkpoint(
+                image_source=image_source,
+                output_path=output,
+                checkpoint_path=checkpoint_path,
+            )
+            logger.success(f"Dataset saved to: {output_path}")
         else:
-            # 데이터셋 형식으로 저장
+            # 일반 모드로 데이터셋 저장
             output_path = run_inference(
                 image_source=image_source,
                 output_path=output,
-                config_path=args.config,
-                task=args.task,
+                config_path=config_path,
+                task=task,
             )
             logger.success(f"Dataset saved to: {output_path}")
     finally:
@@ -177,8 +251,62 @@ def cmd_train(args):
     signal.signal(signal.SIGINT, GracefulShutdown.request_shutdown)
     signal.signal(signal.SIGTERM, GracefulShutdown.request_shutdown)
 
+    # resume 시 메타데이터 로드 및 검증/자동로드
+    dataset = args.dataset
+    eval_dataset = args.eval_dataset
+    config = args.config
+    mode = args.mode
+    output = args.output
+
+    if args.resume:
+        meta = VLMTrainer.load_training_meta(args.resume)
+        if meta:
+            logger.info("Found training metadata from checkpoint")
+
+            # 인자가 없으면 메타데이터에서 자동 로드
+            if not dataset:
+                dataset = meta.get("dataset")
+                logger.info(f"Auto-loaded dataset from metadata: {dataset}")
+
+            if not eval_dataset and meta.get("eval_dataset"):
+                eval_dataset = meta.get("eval_dataset")
+                logger.info(f"Auto-loaded eval_dataset from metadata: {eval_dataset}")
+
+            if not config and meta.get("config_path"):
+                config = meta.get("config_path")
+                logger.info(f"Auto-loaded config from metadata: {config}")
+
+            if not mode and meta.get("mode"):
+                mode = meta.get("mode")
+                logger.info(f"Auto-loaded mode from metadata: {mode}")
+
+            if not output and meta.get("output_dir"):
+                output = meta.get("output_dir")
+                logger.info(f"Auto-loaded output_dir from metadata: {output}")
+
+            # 인자가 제공된 경우 검증
+            is_valid, warnings = VLMTrainer.validate_training_meta(
+                meta,
+                dataset_path=args.dataset if args.dataset else None,
+                config_path=args.config if args.config != "config/train_config.yaml" else None,
+                mode=args.mode,
+            )
+
+            if not is_valid:
+                logger.warning("Training configuration mismatch detected:")
+                for warning in warnings:
+                    logger.warning(warning)
+                logger.warning("Proceeding with current arguments (not metadata)")
+        else:
+            logger.warning("No training metadata found for checkpoint")
+
+    # dataset이 여전히 없으면 에러
+    if not dataset:
+        logger.error("Dataset is required. Use --dataset or resume from a checkpoint with metadata.")
+        sys.exit(1)
+
     trainer = VLMTrainer(
-        config_path=args.config,
+        config_path=config,
         env_path=args.env,
     )
 
@@ -186,12 +314,13 @@ def cmd_train(args):
     GracefulShutdown.trainer = trainer
 
     # CLI에서 output이 주어지면 output_dir 설정 (checkpoint_dir도 자동 설정)
-    if args.output:
-        trainer.set_output_dir(args.output)
+    if output:
+        trainer.set_output_dir(output)
 
-    logger.info(f"Layer mode: {args.mode or trainer.training_mode}")
+    effective_mode = mode or trainer.training_mode
+    logger.info(f"Layer mode: {effective_mode}")
     logger.info(f"Base model: {trainer.base_model_path}")
-    logger.info(f"Dataset: {args.dataset}")
+    logger.info(f"Dataset: {dataset}")
     logger.info(f"Output dir: {trainer.output_dir}")
     logger.info(f"Checkpoint dir: {trainer.checkpoint_dir}")
 
@@ -199,7 +328,7 @@ def cmd_train(args):
     trainer.load_model()
 
     # LoRA 설정 (레이어 선택)
-    trainer.setup_lora(mode=args.mode or trainer.training_mode)
+    trainer.setup_lora(mode=effective_mode)
 
     # 학습 (shutdown 요청 시 조기 종료)
     if GracefulShutdown.shutdown_requested:
@@ -208,9 +337,10 @@ def cmd_train(args):
 
     # 학습
     trainer.train(
-        dataset=args.dataset,
-        eval_dataset=args.eval_dataset,
+        dataset=dataset,
+        eval_dataset=eval_dataset,
         resume_from_checkpoint=args.resume,
+        mode=effective_mode,
     )
 
     # 모델 저장 (CLI --save-merged가 있으면 덮어쓰기, 없으면 config 사용)
@@ -410,8 +540,9 @@ Examples:
     infer_parser.add_argument(
         "--config",
         type=str,
-        required=True,
-        help="Teacher model config YAML (e.g., config/teacher_api.yaml)",
+        default=None,
+        help="Teacher model config YAML (e.g., config/teacher_api.yaml). "
+             "Optional if resuming with --checkpoint.",
     )
     infer_parser.add_argument(
         "--output",
@@ -430,6 +561,15 @@ Examples:
         action="store_true",
         help="List available tasks in prompts.yaml",
     )
+    infer_parser.add_argument(
+        "--checkpoint",
+        type=str,
+        nargs="?",
+        const="auto",
+        default=None,
+        help="Enable checkpoint mode for resumable inference. "
+             "Optionally provide checkpoint file path to resume from.",
+    )
 
     # =============================================
     # train command
@@ -438,8 +578,8 @@ Examples:
     train_parser.add_argument(
         "--dataset",
         type=str,
-        required=True,
-        help="Path to training dataset (JSONL)",
+        default=None,
+        help="Path to training dataset (JSONL). Optional if resuming with metadata.",
     )
     train_parser.add_argument(
         "--eval-dataset",

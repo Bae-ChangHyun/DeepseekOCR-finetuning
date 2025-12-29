@@ -587,6 +587,75 @@ class DatasetInferencer:
         logger.success(f"Dataset saved to {output_path}")
         return output_path
 
+    @staticmethod
+    def load_inference_checkpoint(checkpoint_path: str | Path) -> dict | None:
+        """
+        추론 체크포인트 메타데이터를 로드합니다.
+
+        Args:
+            checkpoint_path: 체크포인트 파일 경로
+
+        Returns:
+            메타데이터 딕셔너리 또는 None
+        """
+        checkpoint_path = Path(checkpoint_path)
+        if not checkpoint_path.exists():
+            return None
+
+        try:
+            with open(checkpoint_path, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load inference checkpoint: {e}")
+            return None
+
+    @staticmethod
+    def validate_inference_checkpoint(
+        checkpoint_data: dict,
+        image_source: str | Path | None = None,
+        config_path: str | Path | None = None,
+        task: str | None = None,
+    ) -> tuple[bool, list[str]]:
+        """
+        추론 체크포인트 메타데이터와 현재 설정을 비교 검증합니다.
+
+        Returns:
+            (is_valid, warnings): 검증 결과와 경고 메시지 리스트
+        """
+        warnings = []
+        meta = checkpoint_data.get("meta", {})
+
+        if image_source:
+            saved_source = meta.get("image_source", "")
+            current_source = str(Path(image_source).resolve())
+            if saved_source != current_source:
+                warnings.append(
+                    f"Image source mismatch:\n"
+                    f"  - Saved: {saved_source}\n"
+                    f"  - Current: {current_source}"
+                )
+
+        if config_path:
+            saved_config = meta.get("config_path", "")
+            current_config = str(Path(config_path).resolve())
+            if saved_config != current_config:
+                warnings.append(
+                    f"Config mismatch:\n"
+                    f"  - Saved: {saved_config}\n"
+                    f"  - Current: {current_config}"
+                )
+
+        if task:
+            saved_task = meta.get("task", "")
+            if saved_task != task:
+                warnings.append(
+                    f"Task mismatch:\n"
+                    f"  - Saved: {saved_task}\n"
+                    f"  - Current: {task}"
+                )
+
+        return len(warnings) == 0, warnings
+
     def run_with_checkpoint(
         self,
         image_source: str | Path,
@@ -607,6 +676,8 @@ class DatasetInferencer:
         Returns:
             저장된 데이터셋 파일 경로
         """
+        from datetime import datetime
+
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -615,8 +686,9 @@ class DatasetInferencer:
         else:
             checkpoint_path = Path(checkpoint_path)
 
-        # 체크포인트에서 처리된 이미지 목록 로드
+        # 체크포인트에서 처리된 이미지 목록 및 메타데이터 로드
         processed: set[str] = set()
+        checkpoint_data: dict = {}
         if checkpoint_path.exists():
             try:
                 with open(checkpoint_path, encoding="utf-8") as f:
@@ -641,6 +713,16 @@ class DatasetInferencer:
 
         # Student instruction 가져오기
         student_instruction = self.inferencer.student_instruction
+
+        # 메타데이터 준비
+        meta = {
+            "image_source": str(Path(image_source).resolve()),
+            "config_path": str(self.config_path.resolve()),
+            "task": self.task,
+            "output_path": str(output_path.resolve()),
+            "created_at": checkpoint_data.get("meta", {}).get("created_at", datetime.now().isoformat()),
+            "updated_at": datetime.now().isoformat(),
+        }
 
         # 기존 결과 로드
         dataset = []
@@ -687,9 +769,13 @@ class DatasetInferencer:
                 # 처리됨으로 표시
                 processed.add(str(image_path))
 
-                # 체크포인트 저장
+                # 체크포인트 저장 (메타데이터 포함)
+                meta["updated_at"] = datetime.now().isoformat()
                 with open(checkpoint_path, "w", encoding="utf-8") as f:
-                    json.dump({"processed": list(processed)}, f)
+                    json.dump({
+                        "meta": meta,
+                        "processed": list(processed),
+                    }, f, ensure_ascii=False, indent=2)
 
                 # 결과 저장 (매번 덮어쓰기)
                 if self.output_format == "jsonl" or output_path.suffix == ".jsonl":
