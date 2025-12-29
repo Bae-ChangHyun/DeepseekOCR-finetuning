@@ -10,8 +10,9 @@ import base64
 import json
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
+from typing import Any, TypeVar
 
 import yaml
 from loguru import logger
@@ -19,6 +20,37 @@ from PIL import Image
 from tqdm import tqdm
 from unsloth import FastVisionModel
 from transformers import AutoModel
+
+
+T = TypeVar("T")
+
+
+def run_async(coro: Coroutine[Any, Any, T]) -> T:
+    """
+    기존 이벤트 루프 호환 async 실행
+
+    Jupyter Notebook 등 이미 이벤트 루프가 실행 중인 환경에서도 동작합니다.
+    nest_asyncio가 설치되어 있으면 자동으로 사용합니다.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # 실행 중인 루프가 없으면 일반적인 방식 사용
+        return asyncio.run(coro)
+
+    # 이미 실행 중인 루프가 있는 경우
+    try:
+        import nest_asyncio
+
+        nest_asyncio.apply()
+        return asyncio.run(coro)
+    except ImportError:
+        # nest_asyncio가 없으면 새 스레드에서 실행
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result()
 
 
 # 페이지 패턴: {name}_p{page}
@@ -213,7 +245,7 @@ class APIInferencer(BaseInferencer):
             sem = asyncio.Semaphore(1)
             _, result = await self._infer_single(image_path, sem)
             return result
-        return asyncio.run(_run())
+        return run_async(_run())
 
     def infer_batch(self, image_paths: list[Path]) -> list[dict]:
         """배치 이미지 추론"""
@@ -235,7 +267,7 @@ class APIInferencer(BaseInferencer):
                     })
             return results
 
-        return asyncio.run(_run())
+        return run_async(_run())
 
     def infer_by_document_streaming(
         self,
@@ -299,7 +331,7 @@ class APIInferencer(BaseInferencer):
 
             return completed_docs
 
-        return asyncio.run(_run())
+        return run_async(_run())
 
 
 class LocalInferencer(BaseInferencer):
@@ -553,6 +585,131 @@ class DatasetInferencer:
                 json.dump(dataset, f, ensure_ascii=False, indent=2)
 
         logger.success(f"Dataset saved to {output_path}")
+        return output_path
+
+    def run_with_checkpoint(
+        self,
+        image_source: str | Path,
+        output_path: str | Path,
+        checkpoint_path: str | Path | None = None,
+    ) -> Path:
+        """
+        체크포인트 기반 추론 실행 (중단 시 재개 가능)
+
+        각 이미지 추론 완료 시 체크포인트를 저장하여,
+        중단 후 다시 실행하면 이전에 완료된 이미지를 건너뜁니다.
+
+        Args:
+            image_source: 이미지 파일 또는 이미지가 있는 디렉토리
+            output_path: 출력 파일 경로 (.jsonl 또는 .json)
+            checkpoint_path: 체크포인트 파일 경로 (None이면 output_path + .checkpoint)
+
+        Returns:
+            저장된 데이터셋 파일 경로
+        """
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if checkpoint_path is None:
+            checkpoint_path = output_path.with_suffix(".checkpoint.json")
+        else:
+            checkpoint_path = Path(checkpoint_path)
+
+        # 체크포인트에서 처리된 이미지 목록 로드
+        processed: set[str] = set()
+        if checkpoint_path.exists():
+            try:
+                with open(checkpoint_path, encoding="utf-8") as f:
+                    checkpoint_data = json.load(f)
+                    processed = set(checkpoint_data.get("processed", []))
+                logger.info(f"Resuming from checkpoint: {len(processed)} already processed")
+            except Exception as e:
+                logger.warning(f"Could not load checkpoint: {e}")
+
+        image_paths = self._get_image_paths(image_source)
+        logger.info(f"Found {len(image_paths)} images total")
+
+        # 이미 처리된 이미지 필터링
+        remaining_paths = [p for p in image_paths if str(p) not in processed]
+        logger.info(f"Remaining to process: {len(remaining_paths)} images")
+
+        if not remaining_paths:
+            logger.info("All images already processed")
+            # 기존 결과 반환
+            if output_path.exists():
+                return output_path
+
+        # Student instruction 가져오기
+        student_instruction = self.inferencer.student_instruction
+
+        # 기존 결과 로드
+        dataset = []
+        if output_path.exists():
+            try:
+                if output_path.suffix == ".jsonl":
+                    with open(output_path, encoding="utf-8") as f:
+                        for line in f:
+                            if line.strip():
+                                dataset.append(json.loads(line))
+                else:
+                    with open(output_path, encoding="utf-8") as f:
+                        dataset = json.load(f)
+                logger.info(f"Loaded {len(dataset)} existing results")
+            except Exception as e:
+                logger.warning(f"Could not load existing results: {e}")
+
+        # 하나씩 추론하면서 체크포인트 저장
+        for image_path in tqdm(remaining_paths, desc="Inferring with checkpoint"):
+            try:
+                text = self.inferencer.infer(image_path)
+
+                if text is not None:
+                    item = {
+                        "messages": [
+                            {
+                                "role": "<|User|>",
+                                "content": student_instruction,
+                                "images": [str(image_path)],
+                            },
+                            {
+                                "role": "<|Assistant|>",
+                                "content": text.strip(),
+                            },
+                        ],
+                        "metadata": {
+                            "source_image": str(image_path),
+                            "task": self.task,
+                            "config": str(self.config_path),
+                        },
+                    }
+                    dataset.append(item)
+
+                # 처리됨으로 표시
+                processed.add(str(image_path))
+
+                # 체크포인트 저장
+                with open(checkpoint_path, "w", encoding="utf-8") as f:
+                    json.dump({"processed": list(processed)}, f)
+
+                # 결과 저장 (매번 덮어쓰기)
+                if self.output_format == "jsonl" or output_path.suffix == ".jsonl":
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        for d in dataset:
+                            f.write(json.dumps(d, ensure_ascii=False) + "\n")
+                else:
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        json.dump(dataset, f, ensure_ascii=False, indent=2)
+
+            except Exception as e:
+                logger.error(f"Failed to process {image_path}: {e}")
+                continue
+
+        # 완료 후 체크포인트 삭제
+        if checkpoint_path.exists():
+            checkpoint_path.unlink()
+            logger.debug("Checkpoint file removed")
+
+        logger.success(f"Dataset saved to {output_path} ({len(dataset)} samples)")
         return output_path
 
     def run_markdown(

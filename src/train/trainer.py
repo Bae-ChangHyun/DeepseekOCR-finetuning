@@ -34,6 +34,7 @@ class VLMTrainer:
             load_dotenv()
 
         # 설정 로드
+        self._config_path = config_path
         self.config = self._load_config(config_path)
         self.training_mode = os.getenv("TRAINING_MODE", "vision")
 
@@ -144,7 +145,7 @@ class VLMTrainer:
         target_modules = get_target_modules(
             mode=mode,
             model=self.model,
-            config_path="config/train_config.yaml",
+            config_path=self._config_path,
             custom_modules=custom_target_modules,
         )
 
@@ -263,13 +264,27 @@ class VLMTrainer:
 
     def _print_memory_stats(self, trainer_stats):
         """학습 후 메모리 통계를 출력합니다."""
-        gpu_stats = torch.cuda.get_device_properties(0)
-        used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
-        max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
-
         logger.success("Training Complete!")
-        logger.info(f"Training time: {trainer_stats.metrics['train_runtime']:.2f} seconds ({trainer_stats.metrics['train_runtime'] / 60:.2f} minutes)")
-        logger.info(f"Peak GPU memory: {used_memory} GB / {max_memory} GB ({used_memory / max_memory * 100:.1f}%)")
+        logger.info(
+            f"Training time: {trainer_stats.metrics['train_runtime']:.2f} seconds "
+            f"({trainer_stats.metrics['train_runtime'] / 60:.2f} minutes)"
+        )
+
+        # CUDA 사용 가능 여부 확인
+        if not torch.cuda.is_available():
+            logger.info("CUDA not available, skipping GPU memory stats")
+            return
+
+        try:
+            gpu_stats = torch.cuda.get_device_properties(0)
+            used_memory = round(torch.cuda.max_memory_reserved() / 1024 / 1024 / 1024, 3)
+            max_memory = round(gpu_stats.total_memory / 1024 / 1024 / 1024, 3)
+            logger.info(
+                f"Peak GPU memory: {used_memory} GB / {max_memory} GB "
+                f"({used_memory / max_memory * 100:.1f}%)"
+            )
+        except Exception as e:
+            logger.warning(f"Could not get GPU memory stats: {e}")
 
     def save_model(
         self,

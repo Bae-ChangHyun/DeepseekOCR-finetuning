@@ -15,12 +15,7 @@ from loguru import logger
 from PIL import Image, ImageOps
 from torch.nn.utils.rnn import pad_sequence
 
-from models.deepseek_ocr.modeling_deepseekocr import (
-    BasicImageTransform,
-    dynamic_preprocess,
-    format_messages,
-    text_encode,
-)
+from src.data.model_adapter import DeepSeekOCRAdapter
 
 
 @dataclass
@@ -63,7 +58,7 @@ class DeepSeekOCRDataCollator:
         self.dtype = model.dtype
         self.train_on_responses_only = train_on_responses_only
 
-        self.image_transform = BasicImageTransform(
+        self.image_transform = DeepSeekOCRAdapter.get_image_transform(
             mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5), normalize=True
         )
         self.patch_size = 16
@@ -131,7 +126,7 @@ class DeepSeekOCRDataCollator:
                 crop_ratio = (1, 1)
                 images_crop_raw = []
             else:
-                images_crop_raw, crop_ratio = dynamic_preprocess(
+                images_crop_raw, crop_ratio = DeepSeekOCRAdapter.dynamic_preprocess(
                     image,
                     min_num=2,
                     max_num=9,
@@ -239,7 +234,7 @@ class DeepSeekOCRDataCollator:
             text_splits = content.split("<image>")
 
             for i, text_sep in enumerate(text_splits):
-                tokenized_sep = text_encode(self.tokenizer, text_sep, bos=False, eos=False)
+                tokenized_sep = DeepSeekOCRAdapter.text_encode(self.tokenizer, text_sep, bos=False, eos=False)
                 tokenized_str.extend(tokenized_sep)
                 images_seq_mask.extend([False] * len(tokenized_sep))
 

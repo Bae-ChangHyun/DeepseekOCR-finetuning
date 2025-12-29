@@ -1,5 +1,5 @@
 models/
-data/
+/data/
 dataset.json
 *.pdf
 outputs/

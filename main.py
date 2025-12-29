@@ -7,10 +7,36 @@ PDF → 이미지 변환, Teacher 모델 추론, 학습을 위한 CLI 도구
 
 import argparse
 import datetime
+import signal
 import sys
 from pathlib import Path
 
 from loguru import logger
+
+
+class GracefulShutdown:
+    """Graceful shutdown handler for training"""
+
+    shutdown_requested = False
+    trainer = None
+
+    @classmethod
+    def request_shutdown(cls, signum, frame):
+        """Signal handler for graceful shutdown"""
+        if cls.shutdown_requested:
+            logger.warning("Force shutdown requested, exiting immediately...")
+            sys.exit(1)
+
+        cls.shutdown_requested = True
+        logger.warning("Shutdown requested, finishing current step...")
+
+        if cls.trainer is not None:
+            try:
+                logger.info("Saving emergency checkpoint...")
+                cls.trainer.save_model(save_merged=False)
+                logger.success("Emergency checkpoint saved")
+            except Exception as e:
+                logger.error(f"Failed to save emergency checkpoint: {e}")
 
 # 기본 모델 경로 상수
 DEFAULT_MODEL_DIR = Path("models/deepseek_ocr")
@@ -90,59 +116,74 @@ def cmd_infer(args):
             output = f"./data/json/{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.jsonl"
 
     # PDF 입력 처리: PDF → 이미지 변환 후 추론
-    if args.pdf:
-        from src.data.pdf2img import pdf2img
+    temp_dir_context = None
+    try:
+        if args.pdf:
+            from src.data.pdf2img import pdf2img
 
-        # 임시 디렉토리에 이미지 변환
-        temp_dir = tempfile.mkdtemp(prefix="ocr_infer_")
-        logger.info(f"PDF source: {args.pdf}")
-        logger.info(f"Converting PDF to images in: {temp_dir}")
+            # TemporaryDirectory를 사용하여 자동 정리
+            temp_dir_context = tempfile.TemporaryDirectory(prefix="ocr_infer_")
+            temp_dir = temp_dir_context.name
+            logger.info(f"PDF source: {args.pdf}")
+            logger.info(f"Converting PDF to images in: {temp_dir}")
 
-        image_paths = pdf2img(
-            source=args.pdf,
-            output_dir=temp_dir,
-            dpi=args.dpi,
-            image_format="png",
-        )
-        logger.info(f"Converted {len(image_paths)} pages")
-        image_source = temp_dir
-    else:
-        image_source = args.images
+            image_paths = pdf2img(
+                source=args.pdf,
+                output_dir=temp_dir,
+                dpi=args.dpi,
+                image_format="png",
+            )
+            logger.info(f"Converted {len(image_paths)} pages")
+            image_source = temp_dir
+        else:
+            image_source = args.images
 
-    logger.info(f"Image source: {image_source}")
-    logger.info(f"Config: {args.config}")
-    logger.info(f"Task: {args.task}")
-    logger.info(f"Output: {output}")
-    logger.info(f"Format: {'markdown' if is_markdown else output_format}")
+        logger.info(f"Image source: {image_source}")
+        logger.info(f"Config: {args.config}")
+        logger.info(f"Task: {args.task}")
+        logger.info(f"Output: {output}")
+        logger.info(f"Format: {'markdown' if is_markdown else output_format}")
 
-    if is_markdown:
-        # 마크다운 파일로 저장 (같은 PDF 페이지는 자동 병합)
-        output_dir = run_inference_markdown(
-            image_source=image_source,
-            output_dir=output,
-            config_path=args.config,
-            task=args.task,
-        )
-        logger.success(f"Markdown files saved to: {output_dir}")
-    else:
-        # 데이터셋 형식으로 저장
-        output_path = run_inference(
-            image_source=image_source,
-            output_path=output,
-            config_path=args.config,
-            task=args.task,
-        )
-        logger.success(f"Dataset saved to: {output_path}")
+        if is_markdown:
+            # 마크다운 파일로 저장 (같은 PDF 페이지는 자동 병합)
+            output_dir = run_inference_markdown(
+                image_source=image_source,
+                output_dir=output,
+                config_path=args.config,
+                task=args.task,
+            )
+            logger.success(f"Markdown files saved to: {output_dir}")
+        else:
+            # 데이터셋 형식으로 저장
+            output_path = run_inference(
+                image_source=image_source,
+                output_path=output,
+                config_path=args.config,
+                task=args.task,
+            )
+            logger.success(f"Dataset saved to: {output_path}")
+    finally:
+        # 임시 디렉토리 정리
+        if temp_dir_context is not None:
+            temp_dir_context.cleanup()
+            logger.debug("Cleaned up temporary directory")
 
 
 def cmd_train(args):
     """모델 학습"""
     from src.train.trainer import VLMTrainer
 
+    # Graceful shutdown 설정
+    signal.signal(signal.SIGINT, GracefulShutdown.request_shutdown)
+    signal.signal(signal.SIGTERM, GracefulShutdown.request_shutdown)
+
     trainer = VLMTrainer(
         config_path=args.config,
         env_path=args.env,
     )
+
+    # GracefulShutdown에 trainer 등록
+    GracefulShutdown.trainer = trainer
 
     # CLI에서 output이 주어지면 output_dir 설정 (checkpoint_dir도 자동 설정)
     if args.output:
@@ -159,6 +200,11 @@ def cmd_train(args):
 
     # LoRA 설정 (레이어 선택)
     trainer.setup_lora(mode=args.mode or trainer.training_mode)
+
+    # 학습 (shutdown 요청 시 조기 종료)
+    if GracefulShutdown.shutdown_requested:
+        logger.warning("Shutdown requested before training started")
+        return
 
     # 학습
     trainer.train(
