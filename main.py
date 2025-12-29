@@ -496,8 +496,8 @@ Examples:
         parser.print_help()
         sys.exit(1)
 
-    # 모델 체크 (train, evaluate, inspect 명령에서 필요)
-    if args.command in ("train", "evaluate", "inspect"):
+    # 모델 체크 (train, evaluate, inspect, infer 명령에서 필요)
+    if args.command in ("train", "evaluate", "inspect", "infer"):
         ensure_model_exists()
 
     # 명령 실행
